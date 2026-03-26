@@ -45,10 +45,10 @@ if 'jira_logado' not in st.session_state:
         if submit:
             if email_input and token_input:
                 if lembrar:
-                    # Grava os cookies no navegador por 30 dias
-                    cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60)
-                    cookie_manager.set("jira_email", email_input, max_age=30*24*60*60)
-                    cookie_manager.set("jira_token", token_input, max_age=30*24*60*60)
+                    # Grava os cookies no navegador por 30 dias (agora com chaves únicas!)
+                    cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_serv")
+                    cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_email")
+                    cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_token")
                 
                 st.session_state.jira_servidor = servidor_input
                 st.session_state.jira_email = email_input
@@ -125,10 +125,11 @@ col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
-    # Limpa os cookies
-    cookie_manager.delete("jira_servidor")
-    cookie_manager.delete("jira_email")
-    cookie_manager.delete("jira_token")
+    # Limpa os cookies (agora com chaves únicas!)
+    cookie_manager.delete("jira_servidor", key="del_serv")
+    cookie_manager.delete("jira_email", key="del_email")
+    cookie_manager.delete("jira_token", key="del_token")
+    
     for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
 
