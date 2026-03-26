@@ -1,0 +1,7 @@
+streamlit
+pandas
+jira
+streamlit-autorefresh
+extra-streamlit-components
+gspread
+oauth2client
