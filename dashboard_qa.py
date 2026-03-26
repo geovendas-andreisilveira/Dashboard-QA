@@ -6,34 +6,48 @@ from jira import JIRA
 from streamlit_autorefresh import st_autorefresh
 import extra_streamlit_components as stx
 import json
-import os
+import gspread
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
 
 # ==========================================
-# 🍪 GERENCIADOR DE COOKIES (Lembrar Login)
+# ☁️ CONEXÃO COM O GOOGLE SHEETS
+# ==========================================
+@st.cache_resource
+def conectar_google_sheets():
+    # Puxa a chave secreta do cofre do Streamlit
+    creds_dict = json.loads(st.secrets["google_credentials_json"])
+    gc = gspread.service_account_from_dict(creds_dict)
+    sh = gc.open("Base_Portal_QA") # O nome exato da sua planilha no Drive
+    return sh.worksheet("Dados") # A aba da planilha
+
+try:
+    worksheet = conectar_google_sheets()
+except Exception as e:
+    st.error(f"Erro ao conectar no Google Sheets. Verifique o compartilhamento da planilha. Detalhe: {e}")
+    st.stop()
+
+# ==========================================
+# 🍪 GERENCIADOR DE COOKIES E LOGIN
 # ==========================================
 cookie_manager = stx.CookieManager()
+cookies = cookie_manager.get_all()
 
-# Tenta ler o cookie salvo no navegador
-cookie_servidor = cookie_manager.get(cookie="jira_servidor")
-cookie_email = cookie_manager.get(cookie="jira_email")
-cookie_token = cookie_manager.get(cookie="jira_token")
+if cookies:
+    cookie_email = cookies.get("jira_email")
+    cookie_token = cookies.get("jira_token")
+    cookie_servidor = cookies.get("jira_servidor")
 
-# Se tiver cookie, joga pra sessão e loga automático!
-if cookie_email and cookie_token and 'jira_logado' not in st.session_state:
-    st.session_state.jira_servidor = cookie_servidor
-    st.session_state.jira_email = cookie_email
-    st.session_state.jira_token = cookie_token
-    st.session_state.jira_logado = True
+    if cookie_email and cookie_token and 'jira_logado' not in st.session_state:
+        st.session_state.jira_servidor = cookie_servidor
+        st.session_state.jira_email = cookie_email
+        st.session_state.jira_token = cookie_token
+        st.session_state.jira_logado = True
 
-# ==========================================
-# 🔐 TELA DE LOGIN
-# ==========================================
 if 'jira_logado' not in st.session_state:
     st.title("🔐 Login - Portal QA")
-    st.write("Bem-vindo! Insira suas credenciais do Jira para acessar o painel de cenários.")
+    st.write("Bem-vindo! Insira suas credenciais do Jira para acessar o painel.")
     
     with st.form("login_form"):
         servidor_input = st.text_input("URL do Jira", value="https://geovendas.atlassian.net")
@@ -45,10 +59,9 @@ if 'jira_logado' not in st.session_state:
         if submit:
             if email_input and token_input:
                 if lembrar:
-                    # Grava os cookies no navegador por 30 dias (agora com chaves únicas!)
-                    cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_serv")
-                    cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_email")
-                    cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_token")
+                    cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
+                    cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
+                    cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
                 
                 st.session_state.jira_servidor = servidor_input
                 st.session_state.jira_email = email_input
@@ -57,7 +70,7 @@ if 'jira_logado' not in st.session_state:
                 st.rerun()
             else:
                 st.error("Preencha o e-mail e o token para continuar.")
-    st.stop() # Trava aqui até logar!
+    st.stop()
 
 # ==========================================
 # ⏱️ TEMPO REAL (Atualiza a cada 60s)
@@ -65,18 +78,40 @@ if 'jira_logado' not in st.session_state:
 st_autorefresh(interval=60000, limit=None, key="jira_refresh")
 
 # ==========================================
-# ☁️ BANCO DE DADOS (Google Sheets Fake p/ agora, CSV real p/ teste)
+# ⚙️ FUNÇÕES DE DADOS (JIRA E SHEETS)
 # ==========================================
-# NOTA PARA A NUVEM: Quando configurarmos o Google Sheets, vamos trocar isso!
-ARQUIVO_DADOS = f'cenarios_{st.session_state.jira_email}.csv' 
+mes_atual_str = datetime.now().strftime("%Y-%m")
+usuario_atual = st.session_state.jira_email
 
-def carregar_dados():
-    if os.path.exists(ARQUIVO_DADOS):
-        return pd.read_csv(ARQUIVO_DADOS)
-    return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo"])
+def carregar_dados_usuario():
+    # Puxa TUDO do Sheets
+    records = worksheet.get_all_records()
+    if not records:
+        return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo", "Usuario"])
+    df = pd.DataFrame(records)
+    # Filtra só o que é do usuário logado E do mês atual!
+    df_usuario = df[(df["Usuario"] == usuario_atual) & (df["Mes"] == mes_atual_str)]
+    return df_usuario
 
-def salvar_dados(df):
-    df.to_csv(ARQUIVO_DADOS, index=False)
+def salvar_task_no_sheets(task, criados, sem_c, com_c, mes, label, grupo, usuario):
+    records = worksheet.get_all_records()
+    df = pd.DataFrame(records)
+    
+    row_idx = None
+    if not df.empty and "Task" in df.columns:
+        # Procura se o usuário já preencheu essa task antes
+        match = df[(df["Task"] == task) & (df["Usuario"] == usuario)]
+        if not match.empty:
+            row_idx = match.index[0] + 2 # +2 pq a linha 1 é cabeçalho no Sheets
+            
+    nova_linha = [task, criados, sem_c, com_c, mes, label, grupo, usuario]
+    
+    if row_idx:
+        # Se achou, atualiza a linha
+        worksheet.update(f"A{row_idx}:H{row_idx}", [nova_linha])
+    else:
+        # Se não achou, adiciona uma linha nova lá no final da planilha
+        worksheet.append_row(nova_linha)
 
 def categorizar_projeto(nome_projeto):
     if not nome_projeto: return "OUTROS"
@@ -85,9 +120,6 @@ def categorizar_projeto(nome_projeto):
     elif "FORÇA" in nome_upper or "ANALYTICS" in nome_upper or "FV" in nome_upper or "TÊXTIL" in nome_upper: return "FV_FVT_AN"
     else: return "OUTROS"
 
-# ==========================================
-# 🔌 CONEXÃO JIRA
-# ==========================================
 @st.cache_data(ttl=55) 
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
@@ -113,11 +145,10 @@ def buscar_tarefas_jira_real(servidor, email, token):
                 "status": status_atual, "label": area_encontrada, "grupo": categorizar_projeto(area_encontrada)
             })
         return tarefas
-    except Exception as e:
-        st.error("Erro de credenciais do Jira. Deslogue e tente novamente.")
+    except Exception:
         return []
 
-dados_salvos = carregar_dados()
+dados_salvos = carregar_dados_usuario()
 tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
 # --- CABEÇALHO E LOGOUT ---
@@ -125,16 +156,14 @@ col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
-    # Limpa os cookies (agora com chaves únicas!)
-    cookie_manager.delete("jira_servidor", key="del_serv")
-    cookie_manager.delete("jira_email", key="del_email")
-    cookie_manager.delete("jira_token", key="del_token")
-    
+    cookie_manager.delete("jira_servidor", key="del_s")
+    cookie_manager.delete("jira_email", key="del_e")
+    cookie_manager.delete("jira_token", key="del_t")
     for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
 
 # ==========================================
-# 📊 DASHBOARDS
+# 📊 DASHBOARDS DO MÊS
 # ==========================================
 if not dados_salvos.empty:
     df_b2b = dados_salvos[dados_salvos["Grupo"] == "B2B_CRM"]
@@ -142,7 +171,7 @@ if not dados_salvos.empty:
 else:
     df_b2b = df_fv = pd.DataFrame()
 
-st.header("🏆 Visão Geral do Mês")
+st.header(f"🏆 Visão Geral ({mes_atual_str})")
 c1, c2, c3 = st.columns(3)
 c1.metric("Total de Cenários", int(dados_salvos["Criados"].sum()) if not dados_salvos.empty else 0)
 c2.metric("Aprovados (Direto) ✅", int(dados_salvos["Sem_Correcao"].sum()) if not dados_salvos.empty else 0)
@@ -154,11 +183,11 @@ col_esq, col_dir = st.columns(2)
 with col_esq:
     st.subheader("🏢 B2B - CRM")
     if not df_b2b.empty: st.write(f"**Criados:** {int(df_b2b['Criados'].sum())} | **Sem Corr:** {int(df_b2b['Sem_Correcao'].sum())} | **Com Corr:** {int(df_b2b['Com_Correcao'].sum())}")
-    else: st.caption("Nenhum cenário salvo.")
+    else: st.caption("Nenhum cenário salvo neste mês.")
 with col_dir:
     st.subheader("📱 FV - FVT - AN")
     if not df_fv.empty: st.write(f"**Criados:** {int(df_fv['Criados'].sum())} | **Sem Corr:** {int(df_fv['Sem_Correcao'].sum())} | **Com Corr:** {int(df_fv['Com_Correcao'].sum())}")
-    else: st.caption("Nenhum cenário salvo.")
+    else: st.caption("Nenhum cenário salvo neste mês.")
 
 st.divider()
 
@@ -167,7 +196,6 @@ st.divider()
 # ==========================================
 st.header("📝 Tarefas para Preencher")
 tarefas_exibidas = 0
-mes_atual_str = datetime.now().strftime("%Y-%m")
 
 if 'status_anterior' not in st.session_state:
     st.session_state.status_anterior = {}
@@ -177,7 +205,6 @@ for tarefa in tarefas_jira:
     linha_dado = dados_salvos[dados_salvos["Task"] == chave]
     ja_preenchido = not linha_dado.empty
     
-    # 🔔 Notificações Nativas do Site (Sem depender do Windows)
     status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
     if status == "PUBLISHED" and status_anterior != "PUBLISHED":
         if not ja_preenchido:
@@ -219,12 +246,11 @@ for tarefa in tarefas_jira:
             col_btn1, col_btn2 = c4.columns(2)
             
             if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                dados_salvos = dados_salvos[dados_salvos["Task"] != chave]
-                novo_dado = pd.DataFrame([{"Task": chave, "Criados": criados_input, "Sem_Correcao": sem_corr_input, "Com_Correcao": com_corr_input, "Mes": mes_atual_str, "Label": tarefa['label'], "Grupo": tarefa['grupo']}])
-                dados_atualizados = pd.concat([dados_salvos, novo_dado], ignore_index=True)
-                salvar_dados(dados_atualizados) # Salva
+                # Comunica com a Planilha do Google para Salvar
+                salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual)
+                
                 st.session_state[edit_key] = False 
-                st.toast(f"Métricas da {chave} salvas com sucesso!", icon="✅")
+                st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
                 st.rerun()
 
             if st.session_state[edit_key]:
