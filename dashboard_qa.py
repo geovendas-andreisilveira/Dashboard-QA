@@ -40,7 +40,7 @@ def validar_credenciais_jira(servidor, email, token):
         return False
 
 # ==========================================
-# 🍪 LÓGICA DE LOGIN ESTILO FACEBOOK
+# 🍪 LÓGICA DE LOGIN
 # ==========================================
 cookie_manager = stx.CookieManager()
 cookies = cookie_manager.get_all()
@@ -90,7 +90,7 @@ if not st.session_state.get('jira_logado', False):
     st.stop()
 
 # ==========================================
-# ⏱️ TEMPO REAL E DADOS (Nível de Produção)
+# ⏱️ TEMPO REAL E DADOS
 # ==========================================
 st_autorefresh(interval=60000, limit=None, key="jira_refresh")
 
@@ -134,7 +134,7 @@ def categorizar_projeto(nome_projeto):
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
-        # 🔥 TRAVA DE PRODUÇÃO: Pega tudo de Março de 2026 para frente
+        # Trava de Março!
         jql = f'assignee = currentUser() AND updated >= "2026-03-01" ORDER BY updated DESC'
         issues = jira.search_issues(jql, maxResults=100) 
         
@@ -163,9 +163,9 @@ def buscar_tarefas_jira_real(servidor, email, token):
     except Exception as e:
         return f"ERRO_AUTH: {str(e)}"
 
-# Sincronização em segundo plano
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
     dados_todos_unfiltered = carregar_todos_dados()
+    dados_completos_usuario = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
@@ -179,39 +179,36 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.stop()
 
 # ==========================================
-# 👤 USER DISPLAY & AVATAR LÓGICA
+# 👤 AVATAR E NOME DINÂMICO (Erro corrigido!)
 # ==========================================
 avatares = ["🧙‍♂️", "👩‍🎤", "👨‍💻", "👩‍🔬", "🤖"]
 cookie_avatar = cookies.get("qa_avatar")
+
 if cookie_avatar in avatares:
     avatar_index = avatares.index(cookie_avatar)
 else:
     avatar_index = 0
+
+# A VARIÁVEL QUE FALTAVA
+avatar_exibicao = avatares[avatar_index]
 
 if "@" in usuario_atual:
     nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize()
 else:
     nome_exibicao = "Usuário"
 
-# --- CABEÇALHO DInâmico ---
+# Título Bonitão
 st.title(f"📊 Painel de Controle QA - {avatar_exibicao} {nome_exibicao}")
 
 with st.sidebar:
     st.markdown("### Configurações de Perfil")
     
-    # Campo informal de avatar persistente
     avatar_escolhido = st.radio("Escolha seu avatar informal:", avatares, index=avatar_index, horizontal=True)
     if avatar_escolhido != cookie_avatar:
          cookie_manager.set("qa_avatar", avatar_escolhido, max_age=30*24*60*60, key="set_a")
          time.sleep(1) 
-         st.rerun() # Dá o F5 para atualizar o título dinâmico
+         st.rerun()
 
-    st.divider()
-    
-    # 🔥 PORTA SECRETA PARA O GESTOR (Para teste do Andrei)
-    st.markdown("### Modo Visualização (Produção)")
-    modo_simular_chefe = st.toggle("Simular 'Visão do Alison' (Modo Deus)")
-    
     st.divider()
     if st.button("🚪 Sair do Sistema", use_container_width=True):
         if isinstance(cookies, dict):
@@ -225,19 +222,90 @@ with st.sidebar:
 st.divider()
 
 # ==========================================
-# 📑 ABAS (Tabs) DO SISTEMA
+# 🛡️ PERMISSÕES (QUEM É O GESTOR?)
 # ==========================================
-tab_pessoal, tab_equipe = st.tabs(["👤 Meu Painel (Tarefas e Gráficos)", "👑 Visão da Equipe (Gestão)"])
+# Coloquei o seu nome (andrei) e o do Alison para vocês dois terem acesso à aba de equipe.
+emails_gestores = ["alison", "andrei"]
+eh_gestor = any(gestor in usuario_atual.lower() for gestor in emails_gestores)
+
+# Só mostra a aba "Visão da Equipe" se for um gestor!
+abas = st.tabs(["👤 Meu Painel (Tarefas e Gráficos)", "👑 Visão da Equipe (Gestão)"]) if eh_gestor else st.tabs(["👤 Meu Painel (Tarefas e Gráficos)"])
+tab_pessoal = abas[0]
+tab_equipe = abas[1] if eh_gestor else None
+
+# ==========================================
+# 👑 ABA 2: VISÃO DA EQUIPE (Apenas Gestores)
+# ==========================================
+def gerar_tabela_chefe_estilizada(df_grupo):
+    if df_grupo.empty: return pd.DataFrame()
+    resumo_equipe = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+    resumo_equipe["QA Responsável"] = resumo_equipe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+    resumo_equipe = resumo_equipe.rename(columns={"Criados": "Total Cenários Criados", "Sem_Correcao": "Aprovados (Sem Correção)", "Com_Correcao": "Aprovados (Com Correção)"})
+    resumo_equipe["% Sucesso Direto"] = (resumo_equipe["Aprovados (Sem Correção)"] / resumo_equipe["Total Cenários Criados"].replace(0, 1)) * 100
+    
+    total_criados = resumo_equipe["Total Cenários Criados"].sum()
+    total_sem = resumo_equipe["Aprovados (Sem Correção)"].sum()
+    total_com = resumo_equipe["Aprovados (Com Correção)"].sum()
+    taxa_total = (total_sem / total_criados * 100) if total_criados > 0 else 0
+    
+    linha_total_equipe = pd.DataFrame({
+        "QA Responsável": ["TOTAL"], "Total Cenários Criados": [total_criados],
+        "Aprovados (Sem Correção)": [total_sem], "Aprovados (Com Correção)": [total_com], "% Sucesso Direto": [taxa_total]
+    })
+    tabela_final = pd.concat([resumo_equipe, linha_total_equipe], ignore_index=True)
+    tabela_final = tabela_final[["QA Responsável", "Total Cenários Criados", "Aprovados (Sem Correção)", "Aprovados (Com Correção)", "% Sucesso Direto"]]
+    tabela_final["% Sucesso Direto"] = tabela_final["% Sucesso Direto"].fillna(0).round(1)
+    return tabela_final
+
+if tab_equipe:
+    with tab_equipe:
+        st.header("🏢 Visão de Produtividade da Equipe")
+        if not dados_todos_unfiltered.empty:
+            col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
+            meses_equipe = sorted(dados_todos_unfiltered["Mes"].unique(), reverse=True)
+            mes_selecionado_equipe = col_filtro_g.selectbox("Selecione o Mês da Equipe:", meses_equipe, index=0)
+            col_tit_g.subheader(f"📊 Resumo da Equipe ({mes_selecionado_equipe})")
+
+            df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado_equipe]
+            
+            def gerar_excel_relatorio_equipe():
+                output = io.BytesIO()
+                writer = pd.ExcelWriter(output, engine='xlsxwriter')
+                df_mes_equipe.to_excel(writer, sheet_name='Detalhes_Equipe', index=False)
+                tabela_gestor_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
+                if not tabela_gestor_fv.empty: tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_FV', index=False)
+                tabela_gestor_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
+                if not tabela_gestor_b2b.empty: tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_B2B', index=False)
+                writer.close()
+                return output.getvalue()
+
+            excel_data_equipe = gerar_excel_relatorio_equipe()
+            col_download_g.download_button(label="📥 Baixar Relatório da Equipe", data=excel_data_equipe, file_name=f"Relatorio_Equipe_QA_{mes_selecionado_equipe}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+            st.divider()
+            
+            st.subheader("📱 FV - FVT - AN (Visão Geral do Time)")
+            tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
+            if not tabela_fv.empty: st.dataframe(tabela_fv.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else: st.caption("Sem dados para a equipe FV neste mês.")
+                
+            st.write("")
+            st.subheader("🏢 B2B - CRM (Visão Geral do Time)")
+            tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
+            if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else: st.caption("Sem dados para a equipe B2B neste mês.")
+                
+            st.info("💡 Apenas usuários com permissão de Gestor podem visualizar esta aba.")
+        else:
+            st.warning("Nenhum dado foi registrado na nuvem ainda.")
 
 # ------------------------------------------
-# ABA 1: MEU PAINEL (Copiada e Polida do Andrei)
+# 👤 ABA 1: MEU PAINEL
 # ------------------------------------------
 with tab_pessoal:
-    # Filtra os dados brutos para mostrar apenas os seus no filling
     dados_usuario_filling = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
 
     if not dados_usuario_filling.empty:
-        # --- PAINEL DE CONTROLE DO MÊS (PESSOAL) ---
         with st.container(border=True):
             col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
             col_tit.subheader(f"🏆 Meu Resumo")
@@ -250,7 +318,6 @@ with tab_pessoal:
             df_devs_excel_user = df_mes_usuario.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
             df_devs_excel_user["Taxa de Acerto"] = (df_devs_excel_user["Sem_Correcao"] / df_devs_excel_user["Criados"].replace(0, 1)) * 100
             
-            # Gerador do Excel Polido
             def gerar_excel_relatorio_usuario():
                 output = io.BytesIO()
                 writer = pd.ExcelWriter(output, engine='xlsxwriter')
@@ -259,24 +326,16 @@ with tab_pessoal:
                 df_resumo_area_user = df_mes_usuario.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
                 df_resumo_area_user["Taxa de Acerto"] = (df_resumo_area_user["Sem_Correcao"] / df_resumo_area_user["Criados"].replace(0, 1)) * 100
                 df_resumo_area_user.to_excel(writer, sheet_name='Resumo Área', index=False)
-                writer.close() # 🔥 Importante para não dar erro
+                writer.close() 
                 return output.getvalue()
 
             excel_data_usuario = gerar_excel_relatorio_usuario()
-            col_download.download_button(
-                label="📥 Baixar Meu Excel",
-                data=excel_data_usuario,
-                file_name=f"Relatorio_{nome_exibicao}_{mes_selecionado_usuario}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+            col_download.download_button(label="📥 Baixar Meu Excel", data=excel_data_usuario, file_name=f"Relatorio_{nome_exibicao}_{mes_selecionado_usuario}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
         st.write("") 
-        
         df_b2b_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "B2B_CRM"]
         df_fv_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "FV_FVT_AN"]
 
-        # Métricas Pessoais
         c1, c2, c3 = st.columns(3)
         total_cr_u = int(df_mes_usuario["Criados"].sum())
         total_sc_u = int(df_mes_usuario["Sem_Correcao"].sum())
@@ -287,7 +346,6 @@ with tab_pessoal:
         c3.metric("Com Correção ⚠️", total_cc_u)
         
         st.write("")
-        
         col_graf_b2b_u, col_graf_fv_u = st.columns(2)
         
         def criar_grafico_donut_user(df_filtrado, titulo_base):
@@ -331,7 +389,6 @@ with tab_pessoal:
             else:
                 st.caption("Sem dados suficientes para gerar seu ranking neste mês.")
 
-        # E-mail Mailto (PESSOAL)
         st.write("")
         hoje = datetime.now()
         ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
@@ -351,13 +408,11 @@ with tab_pessoal:
 
     st.divider()
 
-    # --- Módulo de preenchimento (CARDS PESSOAIS) ---
+    # --- CARDS DE TAREFAS (PESSOAL) ---
     if not dados_usuario_filling.empty and mes_selecionado_usuario != mes_atual_str:
         st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado_usuario})")
         st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
-        
         t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
-        
         if df_mes_usuario.empty:
             st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado_usuario}.")
         else:
@@ -377,7 +432,6 @@ with tab_pessoal:
         t_exibidas = 0
         if 'status_anterior' not in st.session_state: st.session_state.status_anterior = {}
         
-        # O preenchimento sempre olha pros dados PESSOAIS do mês atual
         d_salvos_mes_atual = dados_usuario_filling[dados_usuario_filling["Mes"] == mes_atual_str] if not dados_usuario_filling.empty else pd.DataFrame()
 
         for t_j in tarefas_jira:
@@ -390,7 +444,7 @@ with tab_pessoal:
             
             l_g = dados_todos_unfiltered[(dados_todos_unfiltered["Task"] == c) & (dados_todos_unfiltered["Usuario"] == usuario_atual)] if not dados_todos_unfiltered.empty else pd.DataFrame()
             j_preenchido_geral = not l_g.empty
-            if j_preenchido_geral and l_g.iloc[0]["Mes"] != mes_atual_str: continue # Mágica da Tela Limpa
+            if j_preenchido_geral and l_g.iloc[0]["Mes"] != mes_atual_str: continue 
 
             l_d_atual = d_salvos_mes_atual[d_salvos_mes_atual["Task"] == c] if not d_salvos_mes_atual.empty else pd.DataFrame()
             j_p_neste_mes = not l_d_atual.empty
@@ -424,9 +478,7 @@ with tab_pessoal:
                     d_sc_filling = int(l_d_atual["Sem_Correcao"].iloc[0]) if j_p_neste_mes else 0
                     d_cc_filling = int(l_d_atual["Com_Correcao"].iloc[0]) if j_p_neste_mes else 0
                     
-                    # 🔥 O NOVO CAMPO DE MÊS DE REFERÊNCIA (UX PERFEITA)
                     m_recentes = [(pd.to_datetime("today") - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(3)]
-                    
                     c1, c2, c3, c4 = st.columns([0.20, 0.20, 0.20, 0.40])
                     c_i = c1.number_input("Criados", min_value=0, step=1, value=d_cr_filling, key=f"cr_{c}")
                     s_i = c2.number_input("Sem Correção", min_value=0, step=1, value=d_sc_filling, key=f"sc_{c}")
@@ -437,7 +489,6 @@ with tab_pessoal:
                     c_b1, c_b2 = st.columns([0.5, 0.5])
                     
                     if c_b1.button("💾 Salvar", key=f"btn_salvar_{c}", use_container_width=True):
-                        # Salva usando o mês que o QA escolheu, não mais o mês atual!
                         salvar_task_no_sheets(c, c_i, s_i, cc_i, m_ref_i, t_j['label'], t_j['grupo'], usuario_atual, dv_r)
                         st.session_state[e_k] = False 
                         st.toast(f"Métricas salvas na Nuvem!", icon="☁️")
@@ -450,112 +501,3 @@ with tab_pessoal:
         if t_exibidas == 0:
             if t_pesquisa_filling: st.warning("Nenhuma tarefa encontrada.")
             else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
-
-# ------------------------------------------
-# 👑 ABA 2: VISÃO DA EQUIPE / GESTÃO (GOD MODE)
-# ------------------------------------------
-# Função auxiliar para gerar a tabela estilo Excel do chefe
-def gerar_tabela_chefe_estilizada(df_grupo):
-    if df_grupo.empty: return pd.DataFrame()
-    
-    # Agrupa pelo QA e soma os dados brutos
-    resumo_equipe = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-    # Pega só o primeiro nome
-    resumo_equipe["QA Responsável"] = resumo_equipe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
-    
-    resumo_equipe = resumo_equipe.rename(columns={
-        "Criados": "Total Cenários Criados",
-        "Sem_Correcao": "Aprovados (Sem Correção)",
-        "Com_Correcao": "Aprovados (Com Correção)"
-    })
-    resumo_equipe["% Sucesso Direto"] = (resumo_equipe["Aprovados (Sem Correção)"] / resumo_equipe["Total Cenários Criados"].replace(0, 1)) * 100
-    
-    # Calcula linha TOTAL
-    total_criados = resumo_equipe["Total Cenários Criados"].sum()
-    total_sem = resumo_equipe["Aprovados (Sem Correção)"].sum()
-    total_com = resumo_equipe["Aprovados (Com Correção)"].sum()
-    taxa_total = (total_sem / total_criados * 100) if total_criados > 0 else 0
-    
-    linha_total_equipe = pd.DataFrame({
-        "QA Responsável": ["TOTAL"],
-        "Total Cenários Criados": [total_criados],
-        "Aprovados (Sem Correção)": [total_sem],
-        "Aprovados (Com Correção)": [total_com],
-        "% Sucesso Direto": [taxa_total]
-    })
-    
-    # Concatena e organiza colunas
-    tabela_final = pd.concat([resumo_equipe, linha_total_equipe], ignore_index=True)
-    tabela_final = tabela_final[["QA Responsável", "Total Cenários Criados", "Aprovados (Sem Correção)", "Aprovados (Com Correção)", "% Sucesso Direto"]]
-    
-    # Aplica formatação de % na tabela inteira
-    tabela_final["% Sucesso Direto"] = tabela_final["% Sucesso Direto"].fillna(0).round(1)
-    
-    return tabela_final
-
-with tab_equipe:
-    st.header("🏢 Visão de Produtividade da Equipe")
-    
-    if not dados_todos_unfiltered.empty:
-        # --- PAINEL DE CONTROLE DO MÊS (EQUIPE) ---
-        col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
-        
-        # O gestor pode ver todos os meses que têm dados na planilha
-        meses_equipe = sorted(dados_todos_unfiltered["Mes"].unique(), reverse=True)
-        mes_selecionado_equipe = col_filtro_g.selectbox("Selecione o Mês da Equipe:", meses_equipe, index=0)
-        col_tit_g.subheader(f"📊 Resumo da Equipe ({mes_selecionado_equipe})")
-
-        # Filtra os dados brutos de TODO O TIME para o mês escolhido
-        df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado_equipe]
-        
-        # Gerador do Excel Polido DA EQUIPE
-        def gerar_excel_relatorio_equipe():
-            output = io.BytesIO()
-            writer = pd.ExcelWriter(output, engine='xlsxwriter')
-            # Aba 1: Todos os detalhes de todos os QAs
-            df_mes_equipe.to_excel(writer, sheet_name='Detalhes_Equipe', index=False)
-            # Aba 2: O Ranking coloridinho estilo Excel do chefe
-            tabela_gestor_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
-            if not tabela_gestor_fv.empty:
-                tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_FV', index=False)
-            tabela_gestor_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
-            if not tabela_gestor_b2b.empty:
-                tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_B2B', index=False)
-            writer.close() # 🔥 Importante
-            return output.getvalue()
-
-        excel_data_equipe = gerar_excel_relatorio_equipe()
-        col_download_g.download_button(
-            label="📥 Baixar Relatório da Equipe",
-            data=excel_data_equipe,
-            file_name=f"Relatorio_Equipe_QA_{mes_selecionado_equipe}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
-        st.divider()
-
-        # 🔥 A MÁGICA DO ALISON: Recriando a planilha colorida dele no site!
-        
-        # 1. Grupo FV - FVT - AN
-        st.subheader("📱 FV - FVT - AN (Visão Geral do Time)")
-        tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
-        if not tabela_fv.empty:
-            # Exibe tabela com estilo (formata % e pinta linha TOTAL de verde)
-            st.dataframe(tabela_fv.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
-        else:
-            st.caption("Sem dados registrados para a equipe FV neste mês.")
-            
-        st.write("")
-        
-        # 2. Grupo B2B - CRM
-        st.subheader("🏢 B2B - CRM (Visão Geral do Time)")
-        tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
-        if not tabela_b2b.empty:
-            st.dataframe(tabela_b2b.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
-        else:
-            st.caption("Sem dados registrados para a equipe B2B neste mês.")
-            
-        st.info("💡 Os dados acima são a soma automática do trabalho de todos os QAs logados no sistema. Esta aba substitui o preenchimento manual do Excel.")
-    else:
-        st.warning("Nenhum dado foi registrado na nuvem ainda.")
