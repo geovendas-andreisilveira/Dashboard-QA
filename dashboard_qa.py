@@ -161,7 +161,9 @@ def buscar_tarefas_jira_real(servidor, email, token):
                 "status": status_atual, "label": area_encontrada, "grupo": categorizar_projeto(area_encontrada)
             })
         return tarefas
-    except Exception:
+    except Exception as e:
+        # 🔥 Agora ele te avisa se o Token ou E-mail estiverem errados!
+        st.error(f"Erro ao conectar no Jira. O Token ou E-mail estão incorretos! Detalhe: {e}")
         return []
 
 dados_salvos = carregar_dados_usuario()
@@ -172,15 +174,17 @@ col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
-    # Pede pro navegador apagar as chaves e dá a chave única
-    cookie_manager.delete("jira_servidor", key="del_s")
-    cookie_manager.delete("jira_email", key="del_e")
-    cookie_manager.delete("jira_token", key="del_t")
+    # Puxa os cookies para ver se eles realmente existem antes de apagar
+    cookies_atuais = cookie_manager.get_all()
     
-    # Limpa a memória do Python
+    if type(cookies_atuais) == dict:
+        if "jira_servidor" in cookies_atuais: cookie_manager.delete("jira_servidor", key="del_s")
+        if "jira_email" in cookies_atuais: cookie_manager.delete("jira_email", key="del_e")
+        if "jira_token" in cookies_atuais: cookie_manager.delete("jira_token", key="del_t")
+    
+    # Limpa a memória da sessão
     for key in list(st.session_state.keys()): del st.session_state[key]
     
-    # 🔥 A MÁGICA: Espera meio segundo pro navegador conseguir apagar de verdade!
     time.sleep(0.5)
     st.rerun()
 
