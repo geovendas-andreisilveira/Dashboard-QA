@@ -212,58 +212,56 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
 # ==========================================
 # 📈 DASHBOARDS E GRÁFICOS VISUAIS
 # ==========================================
-st.divider()
-
-# ==========================================
-# 📈 DASHBOARDS E GRÁFICOS VISUAIS
-# ==========================================
+# Apenas UM divider para não ficar com linha dupla
 st.divider()
 
 if not dados_salvos.empty:
-    # 🔥 AS DUAS LINHAS QUE FALTARAM AQUI! 
-    # (Elas separam a planilha principal nas duas áreas antes de fazer o gráfico)
+    st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
     df_b2b = dados_salvos[dados_salvos["Grupo"] == "B2B_CRM"]
     df_fv = dados_salvos[dados_salvos["Grupo"] == "FV_FVT_AN"]
 
-    st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
+    # --- MÉTRICAS GERAIS (Sem porcentagem global, como o chefe quer) ---
     c1, c2, c3 = st.columns(3)
     total_cr = int(dados_salvos["Criados"].sum())
     total_sc = int(dados_salvos["Sem_Correcao"].sum())
     total_cc = int(dados_salvos["Com_Correcao"].sum())
     
-    taxa_sucesso = (total_sc / total_cr * 100) if total_cr > 0 else 0
-    
-    c1.metric("Total de Cenários", total_cr)
-    c2.metric("Aprovados Direto ✅", total_sc, f"{taxa_sucesso:.1f}% de Acerto")
+    c1.metric("Total de Cenários (Geral)", total_cr)
+    c2.metric("Aprovados Direto ✅", total_sc)
     c3.metric("Com Correção ⚠️", total_cc)
     
     st.write("")
     
-    # --- GRÁFICOS DE DONUT COMPACTOS (B2B vs FV) ---
+    # --- GRÁFICOS DE DONUT (Com porcentagem por Categoria no Título!) ---
     col_graf_b2b, col_graf_fv = st.columns(2)
     
-    def criar_grafico_donut(df_filtrado, titulo):
+    def criar_grafico_donut(df_filtrado, titulo_base):
         if df_filtrado.empty:
-            return None
-        sc = int(df_filtrado["Sem_Correcao"].sum())
-        cc = int(df_filtrado["Com_Correcao"].sum())
+            return None, titulo_base + " (Sem dados)"
+        
+        cr = df_filtrado["Criados"].sum()
+        sc = df_filtrado["Sem_Correcao"].sum()
+        cc = df_filtrado["Com_Correcao"].sum()
+        
+        # Calcula a taxa de acerto específica DESSA categoria
+        taxa = (sc / cr * 100) if cr > 0 else 0
+        titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
         
         source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
-        
         chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
             theta=alt.Theta(field="Quantidade", type="quantitative"),
             color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=["Aprovados ✅", "Com Correção ⚠️"], range=["#2e7b32", "#d4a017"])),
             tooltip=['Status', 'Quantidade']
-        ).properties(title=titulo, height=220)
+        ).properties(title=titulo_com_taxa, height=220)
         return chart
 
     with col_graf_b2b:
-        grafico_b2b = criar_grafico_donut(df_b2b, "🏢 Desempenho B2B - CRM")
+        grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
         if grafico_b2b: st.altair_chart(grafico_b2b, use_container_width=True)
         else: st.caption("Sem dados para B2B.")
 
     with col_graf_fv:
-        grafico_fv = criar_grafico_donut(df_fv, "📱 Desempenho FV - FVT - AN")
+        grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
         if grafico_fv: st.altair_chart(grafico_fv, use_container_width=True)
         else: st.caption("Sem dados para FV.")
 
@@ -273,7 +271,6 @@ if not dados_salvos.empty:
     st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
     
     df_devs = dados_salvos.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-    
     df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
     df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
     
@@ -283,6 +280,32 @@ if not dados_salvos.empty:
     st.dataframe(
         df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}),
         hide_index=True, use_container_width=True
+    )
+    
+    st.write("")
+    
+    # --- BOTÃO DE EXPORTAÇÃO PARA EXCEL ---
+    import io
+    def gerar_excel_relatorio():
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            # Aba 1: Ranking dos Devs
+            df_devs.to_excel(writer, sheet_name='Ranking Devs', index=False)
+            # Aba 2: Resumo por Área
+            df_resumo_area = dados_salvos.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+            df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
+            df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
+            # Aba 3: Dados Crus (Todas as tasks)
+            dados_salvos.to_excel(writer, sheet_name='Dados Completos', index=False)
+        return output.getvalue()
+
+    excel_data = gerar_excel_relatorio()
+    st.download_button(
+        label="📥 Baixar Relatório do Mês (Excel)",
+        data=excel_data,
+        file_name=f"Relatorio_QA_{mes_atual_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
     )
 
 else:
