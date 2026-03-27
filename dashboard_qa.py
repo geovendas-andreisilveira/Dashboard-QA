@@ -139,9 +139,15 @@ def categorizar_projeto(nome_projeto):
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
-        # 🔥 MUDANÇA AQUI: Busca os últimos 45 dias pra você não perder nada na virada do mês!
-        jql = f'assignee = currentUser() AND updated >= -45d ORDER BY updated DESC'
-        issues = jira.search_issues(jql, maxResults=80)
+        
+        # 🔥 A MÁGICA ACONTECE AQUI! 
+        # A trava '2026-03-01' garante que NADA de Fevereiro apareça.
+        # E como não estamos mais limitando a "startOfMonth()", as tarefas pendentes de meses anteriores 
+        # continuarão aparecendo na tela até que você as salve na planilha!
+        jql = f'assignee = currentUser() AND updated >= "2026-03-01" ORDER BY updated DESC'
+        
+        # Aumentei para 100 para garantir que ele puxe todas as tarefas recentes conforme os meses passam
+        issues = jira.search_issues(jql, maxResults=100) 
         
         tarefas = []
         for issue in issues:
