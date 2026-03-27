@@ -4,3 +4,5 @@ jira
 streamlit-autorefresh
 extra-streamlit-components
 gspread
+altair
+xlsxwriter
