@@ -139,8 +139,9 @@ def categorizar_projeto(nome_projeto):
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
-        jql = f'assignee = currentUser() AND updated >= startOfMonth() ORDER BY updated DESC'
-        issues = jira.search_issues(jql, maxResults=50)
+        # 🔥 MUDANÇA AQUI: Busca os últimos 45 dias pra você não perder nada na virada do mês!
+        jql = f'assignee = currentUser() AND updated >= -45d ORDER BY updated DESC'
+        issues = jira.search_issues(jql, maxResults=80)
         
         tarefas = []
         for issue in issues:
@@ -349,87 +350,115 @@ else:
 st.divider()
 
 # ==========================================
-# 📝 TAREFAS E PREENCHIMENTO COM PESQUISA E UX MELHORADO
+# 📝 MODO MÁQUINA DO TEMPO (CARDS INTELIGENTES)
 # ==========================================
-st.header(f"📝 Tarefas para Preencher (Apenas {mes_atual_str})")
 
-termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
+# CENÁRIO A: O usuário está olhando o mês atual. Mostra as pendências!
+if mes_selecionado == mes_atual_str:
+    st.header(f"📝 Tarefas para Preencher ({mes_atual_str})")
+    termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo...)", "")
+    tarefas_exibidas = 0
 
-tarefas_exibidas = 0
+    if 'status_anterior' not in st.session_state:
+        st.session_state.status_anterior = {}
 
-if 'status_anterior' not in st.session_state:
-    st.session_state.status_anterior = {}
+    dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str] if not dados_completos_usuario.empty else pd.DataFrame()
 
-dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str] if not dados_completos_usuario.empty else pd.DataFrame()
+    for tarefa in tarefas_jira:
+        chave, status = tarefa["chave"], tarefa["status"]
+        dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
+        resumo = tarefa['resumo']
+        
+        if termo_pesquisa:
+            termo = termo_pesquisa.lower()
+            if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
+                continue 
+        
+        # Verifica se essa tarefa JÁ EXISTE no Google Sheets em QUALQUER mês
+        linha_geral = dados_completos_usuario[dados_completos_usuario["Task"] == chave] if not dados_completos_usuario.empty else pd.DataFrame()
+        ja_preenchido_geral = not linha_geral.empty
+        
+        # 🔥 A MÁGICA DA TELA LIMPA: Se foi preenchido num mês passado (ex: Março), não mostra na tela de Abril!
+        if ja_preenchido_geral and linha_geral.iloc[0]["Mes"] != mes_atual_str:
+            continue
 
-for tarefa in tarefas_jira:
-    chave, status = tarefa["chave"], tarefa["status"]
-    dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
-    resumo = tarefa['resumo']
-    
-    if termo_pesquisa:
-        termo = termo_pesquisa.lower()
-        if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
-            continue 
-    
-    linha_dado = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave] if not dados_salvos_mes_atual.empty else pd.DataFrame()
-    ja_preenchido = not linha_dado.empty
-    
-    status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
-    if status == "PUBLISHED" and status_anterior != "PUBLISHED":
-        if not ja_preenchido: st.toast(f"🚀 Tarefa {chave} liberada para QA!", icon="🔔")
-        else: st.toast(f"⚠️ Tarefa {chave} retornou! Revise as métricas.", icon="👀")
-    st.session_state.status_anterior[chave] = status
+        linha_dado_atual = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave] if not dados_salvos_mes_atual.empty else pd.DataFrame()
+        ja_preenchido_neste_mes = not linha_dado_atual.empty
 
-    is_done = status in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
-    if not is_done and not ja_preenchido: continue 
+        status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
+        if status == "PUBLISHED" and status_anterior != "PUBLISHED":
+            if not ja_preenchido_neste_mes: st.toast(f"🚀 Tarefa {chave} liberada!", icon="🔔")
+        st.session_state.status_anterior[chave] = status
 
-    tarefas_exibidas += 1
-    edit_key = f"edit_{chave}"
-    if edit_key not in st.session_state: st.session_state[edit_key] = False
+        is_done = status in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
+        if not is_done and not ja_preenchido_neste_mes: continue 
 
-    with st.container(border=True):
-        st.subheader(f"{chave} - {resumo}")
-        st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
+        tarefas_exibidas += 1
+        edit_key = f"edit_{chave}"
+        if edit_key not in st.session_state: st.session_state[edit_key] = False
 
-        if ja_preenchido and not st.session_state[edit_key]:
-            cr, sc, cc = int(linha_dado["Criados"].iloc[0]), int(linha_dado["Sem_Correcao"].iloc[0]), int(linha_dado["Com_Correcao"].iloc[0])
-            c_texto, c_botao = st.columns([0.8, 0.2])
-            c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
-            
-            c_botao.write("") 
-            if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
-                st.session_state[edit_key] = True
-                st.rerun()
+        with st.container(border=True):
+            st.subheader(f"{chave} - {resumo}")
+            st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
 
-        else:
-            def_cr = int(linha_dado["Criados"].iloc[0]) if ja_preenchido else 0
-            def_sc = int(linha_dado["Sem_Correcao"].iloc[0]) if ja_preenchido else 0
-            def_cc = int(linha_dado["Com_Correcao"].iloc[0]) if ja_preenchido else 0
-
-            c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.25, 0.25])
-            
-            criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
-            sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
-            com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
-            
-            c4.write("") 
-            c4.write("") 
-            col_btn1, col_btn2 = c4.columns(2)
-            
-            if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
-                st.session_state[edit_key] = False 
-                st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
-                st.rerun()
-
-            if st.session_state[edit_key]:
-                if col_btn2.button("❌ Cancelar", key=f"btn_cancel_{chave}", use_container_width=True):
-                    st.session_state[edit_key] = False
+            if ja_preenchido_neste_mes and not st.session_state[edit_key]:
+                cr, sc, cc = int(linha_dado_atual["Criados"].iloc[0]), int(linha_dado_atual["Sem_Correcao"].iloc[0]), int(linha_dado_atual["Com_Correcao"].iloc[0])
+                c_texto, c_botao = st.columns([0.8, 0.2])
+                c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
+                
+                c_botao.write("") 
+                if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
+                    st.session_state[edit_key] = True
                     st.rerun()
 
-if tarefas_exibidas == 0:
-    if termo_pesquisa:
-        st.warning("Nenhuma tarefa encontrada com essa pesquisa.")
+            else:
+                def_cr = int(linha_dado_atual["Criados"].iloc[0]) if ja_preenchido_neste_mes else 0
+                def_sc = int(linha_dado_atual["Sem_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
+                def_cc = int(linha_dado_atual["Com_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
+
+                c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.25, 0.25])
+                criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
+                sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
+                com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
+                
+                c4.write(""); c4.write("") 
+                col_btn1, col_btn2 = c4.columns(2)
+                
+                if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
+                    salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
+                    st.session_state[edit_key] = False 
+                    st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
+                    st.rerun()
+
+                if st.session_state[edit_key]:
+                    if col_btn2.button("❌ Cancelar", key=f"btn_cancel_{chave}", use_container_width=True):
+                        st.session_state[edit_key] = False
+                        st.rerun()
+
+    if tarefas_exibidas == 0:
+        if termo_pesquisa: st.warning("Nenhuma tarefa encontrada.")
+        else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
+
+# CENÁRIO B: O usuário selecionou um mês antigo. Mostra o Arquivo Morto (Somente Leitura)!
+else:
+    st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado})")
+    st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
+    
+    termo_pesquisa = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado}...", "")
+    
+    if df_mes.empty:
+        st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado}.")
     else:
-        st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
+        for idx, row in df_mes.iterrows():
+            chave = row["Task"]
+            dev = row["Desenvolvedor"]
+            
+            if termo_pesquisa:
+                termo = termo_pesquisa.lower()
+                if termo not in chave.lower() and termo not in dev.lower():
+                    continue
+                    
+            with st.container(border=True):
+                st.subheader(f"✅ {chave}")
+                st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dev}`")
+                st.success(f"Registrado em {mes_selecionado} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
