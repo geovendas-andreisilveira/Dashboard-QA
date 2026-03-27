@@ -374,11 +374,9 @@ if mes_selecionado == mes_atual_str:
             if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
                 continue 
         
-        # Verifica se essa tarefa JÁ EXISTE no Google Sheets em QUALQUER mês
         linha_geral = dados_completos_usuario[dados_completos_usuario["Task"] == chave] if not dados_completos_usuario.empty else pd.DataFrame()
         ja_preenchido_geral = not linha_geral.empty
         
-        # 🔥 A MÁGICA DA TELA LIMPA: Se foi preenchido num mês passado (ex: Março), não mostra na tela de Abril!
         if ja_preenchido_geral and linha_geral.iloc[0]["Mes"] != mes_atual_str:
             continue
 
@@ -398,7 +396,11 @@ if mes_selecionado == mes_atual_str:
         if edit_key not in st.session_state: st.session_state[edit_key] = False
 
         with st.container(border=True):
-            st.subheader(f"{chave} - {resumo}")
+            
+            # 🔥 AQUI ESTÁ O SEU LINK CLICÁVEL PRO JIRA (Mês Atual)
+            link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
+            st.markdown(f"### [{chave}]({link_tarefa}) - {resumo}")
+            
             st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
 
             if ja_preenchido_neste_mes and not st.session_state[edit_key]:
@@ -439,7 +441,7 @@ if mes_selecionado == mes_atual_str:
         if termo_pesquisa: st.warning("Nenhuma tarefa encontrada.")
         else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
 
-# CENÁRIO B: O usuário selecionou um mês antigo. Mostra o Arquivo Morto (Somente Leitura)!
+# CENÁRIO B: O usuário selecionou um mês antigo. Mostra o Arquivo Morto!
 else:
     st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado})")
     st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
@@ -459,6 +461,9 @@ else:
                     continue
                     
             with st.container(border=True):
-                st.subheader(f"✅ {chave}")
+                # 🔥 AQUI ESTÁ O SEU LINK CLICÁVEL PRO JIRA (Arquivo Morto)
+                link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
+                st.markdown(f"### ✅ [{chave}]({link_tarefa})")
+                
                 st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dev}`")
                 st.success(f"Registrado em {mes_selecionado} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
