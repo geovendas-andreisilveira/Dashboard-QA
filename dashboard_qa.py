@@ -140,13 +140,9 @@ def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
         
-        # 🔥 A MÁGICA ACONTECE AQUI! 
-        # A trava '2026-03-01' garante que NADA de Fevereiro apareça.
-        # E como não estamos mais limitando a "startOfMonth()", as tarefas pendentes de meses anteriores 
-        # continuarão aparecendo na tela até que você as salve na planilha!
+        # 🔥 A TRAVA DE DATA: Nada que foi fechado/atualizado antes de Março de 2026 vai aparecer na tela.
         jql = f'assignee = currentUser() AND updated >= "2026-03-01" ORDER BY updated DESC'
         
-        # Aumentei para 100 para garantir que ele puxe todas as tarefas recentes conforme os meses passam
         issues = jira.search_issues(jql, maxResults=100) 
         
         tarefas = []
@@ -263,10 +259,9 @@ if not dados_completos_usuario.empty:
     
     col_graf_b2b, col_graf_fv = st.columns(2)
     
-    # 🔥 CORREÇÃO DO ATTRIBUTE ERROR AQUI!
     def criar_grafico_donut(df_filtrado, titulo_base):
         if df_filtrado.empty:
-            return None # Devolve apenas None se não tiver dados
+            return None 
         
         cr = df_filtrado["Criados"].sum()
         sc = df_filtrado["Sem_Correcao"].sum()
@@ -346,7 +341,6 @@ Abraços,
             mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
             
             st.write("Baixe o Excel lá no topo e clique no botão abaixo para gerar o texto do e-mail:")
-            # 🔥 CORREÇÃO UX DO E-MAIL: Removi o target="_blank" para ele não abrir a tela branca inútil!
             st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir meu E-mail (Outlook/Gmail) com o texto pronto</a>', unsafe_allow_html=True)
 
 
@@ -403,7 +397,7 @@ if mes_selecionado == mes_atual_str:
 
         with st.container(border=True):
             
-            # 🔥 AQUI ESTÁ O SEU LINK CLICÁVEL PRO JIRA (Mês Atual)
+            # Link clicável pro Jira!
             link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
             st.markdown(f"### [{chave}]({link_tarefa}) - {resumo}")
             
@@ -424,16 +418,20 @@ if mes_selecionado == mes_atual_str:
                 def_sc = int(linha_dado_atual["Sem_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
                 def_cc = int(linha_dado_atual["Com_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
 
-                c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.25, 0.25])
+                # 🔥 O NOVO CAMPO DE MÊS DE REFERÊNCIA
+                meses_recentes = [(pd.to_datetime("today") - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(3)]
+                
+                c1, c2, c3, c4 = st.columns([0.20, 0.20, 0.20, 0.40])
                 criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
                 sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
                 com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
+                mes_referencia_input = c4.selectbox("Mês de Referência", meses_recentes, index=0, key=f"mes_ref_{chave}")
                 
-                c4.write(""); c4.write("") 
-                col_btn1, col_btn2 = c4.columns(2)
+                st.write("") 
+                col_btn1, col_btn2 = st.columns([0.5, 0.5])
                 
-                if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                    salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
+                if col_btn1.button("💾 Salvar Métricas", key=f"btn_salvar_{chave}", use_container_width=True):
+                    salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_referencia_input, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
                     st.session_state[edit_key] = False 
                     st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
                     st.rerun()
@@ -467,7 +465,6 @@ else:
                     continue
                     
             with st.container(border=True):
-                # 🔥 AQUI ESTÁ O SEU LINK CLICÁVEL PRO JIRA (Arquivo Morto)
                 link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
                 st.markdown(f"### ✅ [{chave}]({link_tarefa})")
                 
