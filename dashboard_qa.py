@@ -8,9 +8,9 @@ import extra_streamlit_components as stx
 import json
 import gspread
 import time
-import altair as alt
 import io
 import urllib.parse
+import plotly.express as px # 🔥 Nova biblioteca para gráficos animados!
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
@@ -179,7 +179,7 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.stop()
 
 # ==========================================
-# 👤 AVATAR E NOME DINÂMICO (Erro corrigido!)
+# 👤 AVATAR E NOME DINÂMICO
 # ==========================================
 avatares = ["🧙‍♂️", "👩‍🎤", "👨‍💻", "👩‍🔬", "🤖"]
 cookie_avatar = cookies.get("qa_avatar")
@@ -189,7 +189,6 @@ if cookie_avatar in avatares:
 else:
     avatar_index = 0
 
-# A VARIÁVEL QUE FALTAVA
 avatar_exibicao = avatares[avatar_index]
 
 if "@" in usuario_atual:
@@ -197,7 +196,6 @@ if "@" in usuario_atual:
 else:
     nome_exibicao = "Usuário"
 
-# Título Bonitão
 st.title(f"📊 Painel de Controle QA - {avatar_exibicao} {nome_exibicao}")
 
 with st.sidebar:
@@ -224,11 +222,9 @@ st.divider()
 # ==========================================
 # 🛡️ PERMISSÕES (QUEM É O GESTOR?)
 # ==========================================
-# Coloquei o seu nome (andrei) e o do Alison para vocês dois terem acesso à aba de equipe.
 emails_gestores = ["alison", "andrei"]
 eh_gestor = any(gestor in usuario_atual.lower() for gestor in emails_gestores)
 
-# Só mostra a aba "Visão da Equipe" se for um gestor!
 abas = st.tabs(["👤 Meu Painel (Tarefas e Gráficos)", "👑 Visão da Equipe (Gestão)"]) if eh_gestor else st.tabs(["👤 Meu Painel (Tarefas e Gráficos)"])
 tab_pessoal = abas[0]
 tab_equipe = abas[1] if eh_gestor else None
@@ -261,10 +257,14 @@ if tab_equipe:
     with tab_equipe:
         st.header("🏢 Visão de Produtividade da Equipe")
         if not dados_todos_unfiltered.empty:
+            # 🔥 CORREÇÃO DE UX: Botões 100% alinhados na visão do gestor
             col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
+            
             meses_equipe = sorted(dados_todos_unfiltered["Mes"].unique(), reverse=True)
-            mes_selecionado_equipe = col_filtro_g.selectbox("Selecione o Mês da Equipe:", meses_equipe, index=0)
-            col_tit_g.subheader(f"📊 Resumo da Equipe ({mes_selecionado_equipe})")
+            col_tit_g.subheader(f"📊 Resumo da Equipe")
+
+            col_filtro_g.write("**Mês de Referência:**")
+            mes_selecionado_equipe = col_filtro_g.selectbox("Selecione o Mês da Equipe:", meses_equipe, index=0, label_visibility="collapsed")
 
             df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado_equipe]
             
@@ -280,6 +280,8 @@ if tab_equipe:
                 return output.getvalue()
 
             excel_data_equipe = gerar_excel_relatorio_equipe()
+            
+            col_download_g.write("**Exportar Dados:**")
             col_download_g.download_button(label="📥 Baixar Relatório da Equipe", data=excel_data_equipe, file_name=f"Relatorio_Equipe_QA_{mes_selecionado_equipe}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
             st.divider()
@@ -300,7 +302,7 @@ if tab_equipe:
             st.warning("Nenhum dado foi registrado na nuvem ainda.")
 
 # ------------------------------------------
-# 👤 ABA 1: MEU PAINEL
+# 👤 ABA 1: MEU PAINEL (C/ Gráficos Animados!)
 # ------------------------------------------
 with tab_pessoal:
     dados_usuario_filling = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
@@ -311,6 +313,8 @@ with tab_pessoal:
             col_tit.subheader(f"🏆 Meu Resumo")
             
             meses_disponiveis = sorted(dados_usuario_filling["Mes"].unique(), reverse=True)
+            
+            col_filtro.write("**Mês:**")
             mes_selecionado_usuario = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
 
             df_mes_usuario = dados_usuario_filling[dados_usuario_filling["Mes"] == mes_selecionado_usuario]
@@ -330,6 +334,8 @@ with tab_pessoal:
                 return output.getvalue()
 
             excel_data_usuario = gerar_excel_relatorio_usuario()
+            
+            col_download.write("**Relatório:**")
             col_download.download_button(label="📥 Baixar Meu Excel", data=excel_data_usuario, file_name=f"Relatorio_{nome_exibicao}_{mes_selecionado_usuario}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
         st.write("") 
@@ -345,34 +351,40 @@ with tab_pessoal:
         c2.metric("Aprovados Direto ✅", total_sc_u)
         c3.metric("Com Correção ⚠️", total_cc_u)
         
+        # 🔥 GRÁFICOS ANIMADOS (PLOTLY)
         st.write("")
         col_graf_b2b_u, col_graf_fv_u = st.columns(2)
         
-        def criar_grafico_donut_user(df_filtrado, titulo_base):
+        def criar_grafico_donut_animado(df_filtrado, titulo_base):
             if df_filtrado.empty: return None 
             cr = df_filtrado["Criados"].sum()
             sc = df_filtrado["Sem_Correcao"].sum()
             cc = df_filtrado["Com_Correcao"].sum()
             taxa = (sc / cr * 100) if cr > 0 else 0
-            titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
-            source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
-            chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
-                theta=alt.Theta(field="Quantidade", type="quantitative"),
-                color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=["Aprovados ✅", "Com Correção ⚠️"], range=["#2e7b32", "#d4a017"])),
-                tooltip=['Status', 'Quantidade']
-            ).properties(title=titulo_com_taxa, height=220)
-            return chart
+            
+            df_plot = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
+            fig = px.pie(df_plot, values='Quantidade', names='Status', hole=0.6,
+                         color='Status', color_discrete_map={"Aprovados ✅": "#2e7b32", "Com Correção ⚠️": "#d4a017"})
+            
+            fig.update_layout(
+                title_text=f"<b>{titulo_base}</b><br><span style='font-size:14px; color:gray;'>{taxa:.1f}% de Acerto</span>",
+                title_x=0.5, margin=dict(t=60, b=20, l=20, r=20), showlegend=False,
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+value',
+                              marker=dict(line=dict(color='#1E1E1E', width=2)))
+            return fig
 
         with col_graf_b2b_u:
             with st.container(border=True):
-                g_b2b_u = criar_grafico_donut_user(df_b2b_usuario, "🏢 Meu Desempenho B2B")
-                if g_b2b_u is not None: st.altair_chart(g_b2b_u, use_container_width=True)
+                g_b2b_u = criar_grafico_donut_animado(df_b2b_usuario, "🏢 Desempenho B2B")
+                if g_b2b_u is not None: st.plotly_chart(g_b2b_u, use_container_width=True)
                 else: st.caption("Sem dados de B2B para você neste mês.")
 
         with col_graf_fv_u:
             with st.container(border=True):
-                g_fv_u = criar_grafico_donut_user(df_fv_usuario, "📱 Meu Desempenho FV")
-                if g_fv_u is not None: st.altair_chart(g_fv_u, use_container_width=True)
+                g_fv_u = criar_grafico_donut_animado(df_fv_usuario, "📱 Desempenho FV")
+                if g_fv_u is not None: st.plotly_chart(g_fv_u, use_container_width=True)
                 else: st.caption("Sem dados de FV para você neste mês.")
 
         st.write("")
@@ -389,31 +401,33 @@ with tab_pessoal:
             else:
                 st.caption("Sem dados suficientes para gerar seu ranking neste mês.")
 
+        # 🔥 BOTÃO FLUTUANTE DE E-MAIL (POPOVER - Muito mais limpo!)
         st.write("")
         hoje = datetime.now()
         ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
         dias_para_fim = ultimo_dia - hoje.day
+        
         if dias_para_fim <= 5 and mes_selecionado_usuario == mes_atual_str:
-            with st.container(border=True):
-                st.warning(f"🚨 **Atenção:** Faltam {dias_para_fim} dias para o fechamento de {mes_selecionado_usuario}! Certifique-se de que todas as tarefas foram preenchidas.")
+            with st.popover("🚨 Fechar Mês e Enviar Relatório ao Gestor"):
+                st.markdown(f"Faltam **{dias_para_fim} dias** para fechar {mes_selecionado_usuario}.")
                 t_g = (total_sc_u / total_cr_u * 100) if total_cr_u > 0 else 0
                 assunto = f"Relatório QA - {nome_exibicao} ({mes_selecionado_usuario})"
-                corpo = f"Olá Gestor, tudo bem?\n\nSegue em anexo o relatório dos meus testes referentes a {mes_selecionado_usuario}.\n\n📊 Resumo:\nCriados: {total_cr_u}\nAprovados: {total_sc_u}\nErros: {total_cc_u}\nAcerto: {t_g:.1f}%\n\nO Excel completo está em anexo.\nAbraços,\n{nome_exibicao}"
+                corpo = f"Olá Gestor, tudo bem?\n\nSegue o relatório dos meus testes de {mes_selecionado_usuario}.\n\n📊 Resumo:\nCriados: {total_cr_u}\nAprovados: {total_sc_u}\nErros: {total_cc_u}\nAcerto: {t_g:.1f}%\n\nO Excel completo está em anexo.\nAbraços,\n{nome_exibicao}"
                 assunto_url = urllib.parse.quote(assunto)
                 corpo_url = urllib.parse.quote(corpo)
                 mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
-                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir Meu E-mail com Texto Pronto</a>', unsafe_allow_html=True)
+                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail</a>', unsafe_allow_html=True)
+                st.caption("Dica: Baixe seu Excel acima e anexe no e-mail.")
     else:
         st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
 
     st.divider()
 
-    # --- CARDS DE TAREFAS (PESSOAL) ---
-    # --- CARDS DE TAREFAS (PESSOAL) ---
+    # --- CARDS DE TAREFAS (PESSOAL) COM EXPANDER ---
     if not dados_usuario_filling.empty and mes_selecionado_usuario != mes_atual_str:
         
-        # 🔥 Tudo isso agora fica escondido numa caixinha clicável para não poluir a tela!
-        with st.expander(f"🗄️ Clique aqui para ver o Histórico de Tarefas ({mes_selecionado_usuario})", expanded=False):
+        # 🔥 HISTÓRICO ESCONDIDO NUM EXPANDER (Deixa a tela limpa)
+        with st.expander(f"🗄️ Clique aqui para abrir o Histórico de {mes_selecionado_usuario}", expanded=False):
             st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
             t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
             if df_mes_usuario.empty:
@@ -501,11 +515,11 @@ with tab_pessoal:
                         if c_b2.button("❌ Cancelar", key=f"btn_cancel_{c}", use_container_width=True):
                             st.session_state[e_k] = False
                             st.rerun()
-        # No finalzinho do bloco das tarefas para preencher...
+        
+        # 🔥 ANIMAÇÃO DE SUCESSO (BALÕES)
         if t_exibidas == 0:
             if t_pesquisa_filling: 
                 st.warning("Nenhuma tarefa encontrada na sua pesquisa.")
             else: 
-                # 🔥 ANIMAÇÃO DE SUCESSO AQUI!
                 st.balloons() 
                 st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
