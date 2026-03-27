@@ -409,23 +409,26 @@ with tab_pessoal:
     st.divider()
 
     # --- CARDS DE TAREFAS (PESSOAL) ---
+    # --- CARDS DE TAREFAS (PESSOAL) ---
     if not dados_usuario_filling.empty and mes_selecionado_usuario != mes_atual_str:
-        st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado_usuario})")
-        st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
-        t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
-        if df_mes_usuario.empty:
-            st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado_usuario}.")
-        else:
-            for idx, row in df_mes_usuario.iterrows():
-                ch, dv = row["Task"], row["Desenvolvedor"]
-                if t_pesquisa_h:
-                    tm = t_pesquisa_h.lower()
-                    if tm not in ch.lower() and tm not in dv.lower(): continue
-                with st.container(border=True):
-                    l_t = f"{st.session_state.jira_servidor}/browse/{ch}"
-                    st.markdown(f"### ✅ [{ch}]({l_t})")
-                    st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dv}`")
-                    st.success(f"Registrado em {mes_selecionado_usuario} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
+        
+        # 🔥 Tudo isso agora fica escondido numa caixinha clicável para não poluir a tela!
+        with st.expander(f"🗄️ Clique aqui para ver o Histórico de Tarefas ({mes_selecionado_usuario})", expanded=False):
+            st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
+            t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
+            if df_mes_usuario.empty:
+                st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado_usuario}.")
+            else:
+                for idx, row in df_mes_usuario.iterrows():
+                    ch, dv = row["Task"], row["Desenvolvedor"]
+                    if t_pesquisa_h:
+                        tm = t_pesquisa_h.lower()
+                        if tm not in ch.lower() and tm not in dv.lower(): continue
+                    with st.container(border=True):
+                        l_t = f"{st.session_state.jira_servidor}/browse/{ch}"
+                        st.markdown(f"### ✅ [{ch}]({l_t})")
+                        st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dv}`")
+                        st.success(f"Registrado em {mes_selecionado_usuario} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
     else:
         st.header(f"📝 Minhas Tarefas para Preencher ({mes_atual_str})")
         t_pesquisa_filling = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
@@ -498,6 +501,11 @@ with tab_pessoal:
                         if c_b2.button("❌ Cancelar", key=f"btn_cancel_{c}", use_container_width=True):
                             st.session_state[e_k] = False
                             st.rerun()
+        # No finalzinho do bloco das tarefas para preencher...
         if t_exibidas == 0:
-            if t_pesquisa_filling: st.warning("Nenhuma tarefa encontrada.")
-            else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
+            if t_pesquisa_filling: 
+                st.warning("Nenhuma tarefa encontrada na sua pesquisa.")
+            else: 
+                # 🔥 ANIMAÇÃO DE SUCESSO AQUI!
+                st.balloons() 
+                st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
