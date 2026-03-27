@@ -9,12 +9,13 @@ import json
 import gspread
 import time
 import altair as alt
+import io
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
 
 # ==========================================
-# ☁️ CONEXÃO COM O GOOGLE SHEETS
+# ☁️ CONEXÃO COM O GOOGLE SHEETS E JIRA
 # ==========================================
 @st.cache_resource
 def conectar_google_sheets():
@@ -29,9 +30,6 @@ except Exception as e:
     st.error(f"Erro ao conectar no Google Sheets. Verifique o compartilhamento. Detalhe: {e}")
     st.stop()
 
-# ==========================================
-# 🛡️ FUNÇÃO DE VALIDAÇÃO DO JIRA
-# ==========================================
 def validar_credenciais_jira(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=0, timeout=5)
@@ -46,7 +44,6 @@ def validar_credenciais_jira(servidor, email, token):
 cookie_manager = stx.CookieManager()
 cookies = cookie_manager.get_all()
 
-# 1. Tenta logar automático se o cookie existir
 if isinstance(cookies, dict):
     cookie_email = cookies.get("jira_email")
     cookie_token = cookies.get("jira_token")
@@ -59,7 +56,6 @@ if isinstance(cookies, dict):
         st.session_state.jira_logado = True
         st.rerun()
 
-# 2. Tela de Login se não estiver logado
 if not st.session_state.get('jira_logado', False):
     st.title("🔐 Login - Portal QA")
     st.write("Bem-vindo! Insira suas credenciais do Jira para acessar o painel.")
@@ -76,7 +72,6 @@ if not st.session_state.get('jira_logado', False):
                 with st.spinner("Validando suas credenciais no Jira... Aguarde."):
                     if validar_credenciais_jira(servidor_input, email_input, token_input):
                         if lembrar:
-                            # As chaves únicas garantem que o Streamlit não dê erro!
                             cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
                             cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
                             cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
@@ -151,25 +146,18 @@ def buscar_tarefas_jira_real(servidor, email, token):
             if getattr(issue.fields.issuetype, 'subtask', False): continue
             status_atual = str(issue.fields.status).upper()
             
-            # Caça a Área
             area_encontrada = "Desconhecida"
+            dev_encontrado = "Não Informado"
+            
             for field_name in dir(issue.fields):
                 if field_name.startswith("customfield_"):
                     val = getattr(issue.fields, field_name)
                     if val and hasattr(val, 'value'):
                         if any(x in str(val.value) for x in ["B2B", "CRM", "Força", "Analytics", "Têxtil"]):
                             area_encontrada = str(val.value)
-                            break
                             
-            # Caça o Desenvolvedor
-            dev_encontrado = "Não Informado"
-            for field_name in dir(issue.fields):
-                if field_name.startswith("customfield_"):
-                    val = getattr(issue.fields, field_name)
-                    # Verifica se tem 'displayName', ignorando os campos padrões do Jira
                     if val and hasattr(val, 'displayName') and field_name not in ['assignee', 'creator', 'reporter']:
                         dev_encontrado = val.displayName
-                        break
 
             tarefas.append({
                 "chave": issue.key, "resumo": issue.fields.summary,
@@ -180,12 +168,10 @@ def buscar_tarefas_jira_real(servidor, email, token):
     except Exception as e:
         return f"ERRO_AUTH: {str(e)}"
 
-# Sincroniza dados
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
     dados_salvos = carregar_dados_usuario()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
-# Erro de Auth Implacável
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     if isinstance(cookies, dict):
         if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="err_s")
@@ -212,7 +198,6 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
 # ==========================================
 # 📈 DASHBOARDS E GRÁFICOS VISUAIS
 # ==========================================
-# Apenas UM divider para não ficar com linha dupla
 st.divider()
 
 if not dados_salvos.empty:
@@ -220,7 +205,6 @@ if not dados_salvos.empty:
     df_b2b = dados_salvos[dados_salvos["Grupo"] == "B2B_CRM"]
     df_fv = dados_salvos[dados_salvos["Grupo"] == "FV_FVT_AN"]
 
-    # --- MÉTRICAS GERAIS (Sem porcentagem global, como o chefe quer) ---
     c1, c2, c3 = st.columns(3)
     total_cr = int(dados_salvos["Criados"].sum())
     total_sc = int(dados_salvos["Sem_Correcao"].sum())
@@ -232,7 +216,6 @@ if not dados_salvos.empty:
     
     st.write("")
     
-    # --- GRÁFICOS DE DONUT (Com porcentagem por Categoria no Título!) ---
     col_graf_b2b, col_graf_fv = st.columns(2)
     
     def criar_grafico_donut(df_filtrado, titulo_base):
@@ -243,7 +226,6 @@ if not dados_salvos.empty:
         sc = df_filtrado["Sem_Correcao"].sum()
         cc = df_filtrado["Com_Correcao"].sum()
         
-        # Calcula a taxa de acerto específica DESSA categoria
         taxa = (sc / cr * 100) if cr > 0 else 0
         titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
         
@@ -267,7 +249,6 @@ if not dados_salvos.empty:
 
     st.write("")
 
-    # --- RANKING DE QUALIDADE DO CHEFE (Por Área e Dev) ---
     st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
     
     df_devs = dados_salvos.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
@@ -284,18 +265,13 @@ if not dados_salvos.empty:
     
     st.write("")
     
-    # --- BOTÃO DE EXPORTAÇÃO PARA EXCEL ---
-    import io
     def gerar_excel_relatorio():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Aba 1: Ranking dos Devs
             df_devs.to_excel(writer, sheet_name='Ranking Devs', index=False)
-            # Aba 2: Resumo por Área
             df_resumo_area = dados_salvos.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
             df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
             df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
-            # Aba 3: Dados Crus (Todas as tasks)
             dados_salvos.to_excel(writer, sheet_name='Dados Completos', index=False)
         return output.getvalue()
 
@@ -314,9 +290,13 @@ else:
 st.divider()
 
 # ==========================================
-# 📝 TAREFAS E PREENCHIMENTO
+# 📝 TAREFAS E PREENCHIMENTO COM PESQUISA
 # ==========================================
 st.header("📝 Tarefas para Preencher")
+
+# 🔥 A BARRA DE PESQUISA!
+termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
+
 tarefas_exibidas = 0
 
 if 'status_anterior' not in st.session_state:
@@ -325,6 +305,13 @@ if 'status_anterior' not in st.session_state:
 for tarefa in tarefas_jira:
     chave, status = tarefa["chave"], tarefa["status"]
     dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
+    resumo = tarefa['resumo']
+    
+    # Lógica do Filtro de Pesquisa (ignora maiúscula/minúscula)
+    if termo_pesquisa:
+        termo = termo_pesquisa.lower()
+        if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
+            continue # Pula essa tarefa se não bater com a pesquisa
     
     linha_dado = dados_salvos[dados_salvos["Task"] == chave]
     ja_preenchido = not linha_dado.empty
@@ -343,7 +330,7 @@ for tarefa in tarefas_jira:
     if edit_key not in st.session_state: st.session_state[edit_key] = False
 
     with st.container(border=True):
-        st.subheader(f"{chave} - {tarefa['resumo']}")
+        st.subheader(f"{chave} - {resumo}")
         st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
 
         if ja_preenchido and not st.session_state[edit_key]:
@@ -379,4 +366,7 @@ for tarefa in tarefas_jira:
                     st.rerun()
 
 if tarefas_exibidas == 0:
-    st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
+    if termo_pesquisa:
+        st.warning("Nenhuma tarefa encontrada com essa pesquisa.")
+    else:
+        st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
