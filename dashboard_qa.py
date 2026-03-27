@@ -256,9 +256,11 @@ if not dados_completos_usuario.empty:
     
     col_graf_b2b, col_graf_fv = st.columns(2)
     
+    # 🔥 CORREÇÃO DO ATTRIBUTE ERROR AQUI!
     def criar_grafico_donut(df_filtrado, titulo_base):
         if df_filtrado.empty:
-            return None, titulo_base + " (Sem dados)"
+            return None # Devolve apenas None se não tiver dados
+        
         cr = df_filtrado["Criados"].sum()
         sc = df_filtrado["Sem_Correcao"].sum()
         cc = df_filtrado["Com_Correcao"].sum()
@@ -275,25 +277,32 @@ if not dados_completos_usuario.empty:
     with col_graf_b2b:
         with st.container(border=True):
             grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
-            if grafico_b2b: st.altair_chart(grafico_b2b, use_container_width=True)
-            else: st.caption("Sem dados para B2B.")
+            if grafico_b2b is not None:
+                st.altair_chart(grafico_b2b, use_container_width=True)
+            else:
+                st.caption("🏢 B2B CRM - Sem dados registrados neste mês.")
 
     with col_graf_fv:
         with st.container(border=True):
             grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
-            if grafico_fv: st.altair_chart(grafico_fv, use_container_width=True)
-            else: st.caption("Sem dados para FV.")
+            if grafico_fv is not None:
+                st.altair_chart(grafico_fv, use_container_width=True)
+            else:
+                st.caption("📱 FV - FVT - AN - Sem dados registrados neste mês.")
 
     st.write("")
 
     with st.container(border=True):
         st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
-        df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-        df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
-        df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-        df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-        df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-        st.dataframe(df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        if not df_mes.empty:
+            df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+            df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
+            df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
+            df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
+            df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
+            st.dataframe(df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        else:
+            st.caption("Sem dados suficientes para gerar o ranking neste mês.")
 
     # ==========================================
     # 🚨 ALERTA DE FECHAMENTO E BOTÃO DE E-MAIL (MAILTO)
@@ -330,7 +339,8 @@ Abraços,
             mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
             
             st.write("Baixe o Excel lá no topo e clique no botão abaixo para gerar o texto do e-mail:")
-            st.markdown(f'<a href="{mailto_link}" target="_blank" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir meu E-mail (Outlook/Gmail) com o texto pronto</a>', unsafe_allow_html=True)
+            # 🔥 CORREÇÃO UX DO E-MAIL: Removi o target="_blank" para ele não abrir a tela branca inútil!
+            st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir meu E-mail (Outlook/Gmail) com o texto pronto</a>', unsafe_allow_html=True)
 
 
 else:
@@ -350,8 +360,7 @@ tarefas_exibidas = 0
 if 'status_anterior' not in st.session_state:
     st.session_state.status_anterior = {}
 
-# O preenchimento sempre olha pros dados totais do usuário, mas filtrando pelo mês atual para não salvar errado
-dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str]
+dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str] if not dados_completos_usuario.empty else pd.DataFrame()
 
 for tarefa in tarefas_jira:
     chave, status = tarefa["chave"], tarefa["status"]
@@ -363,7 +372,7 @@ for tarefa in tarefas_jira:
         if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
             continue 
     
-    linha_dado = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave]
+    linha_dado = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave] if not dados_salvos_mes_atual.empty else pd.DataFrame()
     ja_preenchido = not linha_dado.empty
     
     status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
