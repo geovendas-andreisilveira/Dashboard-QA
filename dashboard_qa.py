@@ -17,17 +17,28 @@ st.set_page_config(page_title="Portal QA 🚀", layout="wide")
 # ==========================================
 @st.cache_resource
 def conectar_google_sheets():
-    # Puxa a chave secreta do cofre do Streamlit
     creds_dict = json.loads(st.secrets["google_credentials_json"])
     gc = gspread.service_account_from_dict(creds_dict)
-    sh = gc.open("Base_Portal_QA") # O nome exato da sua planilha no Drive
-    return sh.worksheet("Dados") # A aba da planilha
+    sh = gc.open("Base_Portal_QA")
+    return sh.worksheet("Dados")
 
 try:
     worksheet = conectar_google_sheets()
 except Exception as e:
-    st.error(f"Erro ao conectar no Google Sheets. Verifique o compartilhamento da planilha. Detalhe: {e}")
+    st.error(f"Erro ao conectar no Google Sheets. Verifique o compartilhamento. Detalhe: {e}")
     st.stop()
+
+# ==========================================
+# 🛡️ FUNÇÃO DE VALIDAÇÃO DO JIRA (O Segurança)
+# ==========================================
+def validar_credenciais_jira(servidor, email, token):
+    try:
+        # max_retries=0 e timeout=5 impedem o sistema de travar se o token for falso
+        jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=0, timeout=5)
+        jira.myself() # Tenta bater no servidor para ver quem é você
+        return True
+    except Exception:
+        return False # Se der qualquer erro (token falso, sem internet), ele barra.
 
 # ==========================================
 # 🍪 GERENCIADOR DE COOKIES E LOGIN
@@ -45,7 +56,7 @@ if cookies:
         st.session_state.jira_email = cookie_email
         st.session_state.jira_token = cookie_token
         st.session_state.jira_logado = True
-        st.rerun() # Força o rerun automático para entrar liso
+        st.rerun()
 
 # Se NÃO estiver logado, mostra a tela de Login
 if not st.session_state.get('jira_logado', False):
@@ -61,27 +72,26 @@ if not st.session_state.get('jira_logado', False):
         
         if submit:
             if email_input and token_input:
-                if lembrar:
-                    # Salva os cookies com chaves únicas
-                    cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
-                    cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
-                    cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
-                    
-                    # 🔥 A MÁGICA: Espera meio segundo pro navegador conseguir salvar a senha!
-                    time.sleep(0.5) 
-                
-                st.session_state.jira_servidor = servidor_input
-                st.session_state.jira_email = email_input
-                st.session_state.jira_token = token_input
-                st.session_state.jira_logado = True
-                st.rerun()
+                # 🔥 MÁGICA 1: Spinner de carregamento visual
+                with st.spinner("Validando suas credenciais no Jira... Aguarde."):
+                    # 🔥 MÁGICA 2: Valida ANTES de salvar o cookie
+                    if validar_credenciais_jira(servidor_input, email_input, token_input):
+                        if lembrar:
+                            cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
+                            cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
+                            cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
+                            time.sleep(0.5) 
+                        
+                        st.session_state.jira_servidor = servidor_input
+                        st.session_state.jira_email = email_input
+                        st.session_state.jira_token = token_input
+                        st.session_state.jira_logado = True
+                        st.rerun()
+                    else:
+                        st.error("❌ Token ou E-mail incorretos! Gere um novo token e tente novamente.")
             else:
-                st.error("Preencha o e-mail e o token para continuar.")
-    st.stop() # Trava aqui e não renderiza o resto da tela
-
-# ==========================================
-# TUDO ABAIXO SÓ RODA SE ESTIVER LOGADO
-# ==========================================
+                st.warning("Preencha o e-mail e o token para continuar.")
+    st.stop()
 
 # ==========================================
 # ⏱️ TEMPO REAL (Atualiza a cada 60s)
@@ -89,23 +99,18 @@ if not st.session_state.get('jira_logado', False):
 st_autorefresh(interval=60000, limit=None, key="jira_refresh")
 
 # ==========================================
-# ⚙️ FUNÇÕES DE DADOS (JIRA E SHEETS)
+# ⚙️ FUNÇÕES DE DADOS
 # ==========================================
 mes_atual_str = datetime.now().strftime("%Y-%m")
 usuario_atual = st.session_state.jira_email
 
 def carregar_dados_usuario():
-    # Puxa TUDO do Sheets
     records = worksheet.get_all_records()
     if not records:
         return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo", "Usuario"])
     
     df = pd.DataFrame(records)
-    
-    # 🔥 A VACINA: Remove qualquer espaço em branco invisível dos títulos!
     df.columns = df.columns.str.strip()
-    
-    # Filtra só o que é do usuário logado E do mês atual!
     df_usuario = df[(df["Usuario"] == usuario_atual) & (df["Mes"] == mes_atual_str)]
     return df_usuario
 
@@ -115,18 +120,15 @@ def salvar_task_no_sheets(task, criados, sem_c, com_c, mes, label, grupo, usuari
     
     row_idx = None
     if not df.empty and "Task" in df.columns:
-        # Procura se o usuário já preencheu essa task antes
         match = df[(df["Task"] == task) & (df["Usuario"] == usuario)]
         if not match.empty:
-            row_idx = match.index[0] + 2 # +2 pq a linha 1 é cabeçalho no Sheets
+            row_idx = match.index[0] + 2 
             
     nova_linha = [task, criados, sem_c, com_c, mes, label, grupo, usuario]
     
     if row_idx:
-        # Se achou, atualiza a linha
         worksheet.update(f"A{row_idx}:H{row_idx}", [nova_linha])
     else:
-        # Se não achou, adiciona uma linha nova lá no final da planilha
         worksheet.append_row(nova_linha)
 
 def categorizar_projeto(nome_projeto):
@@ -139,7 +141,8 @@ def categorizar_projeto(nome_projeto):
 @st.cache_data(ttl=55) 
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
-        jira = JIRA(server=servidor, basic_auth=(email, token))
+        # Coloquei timeout de 10s para ele não ficar rodando infinito se a API do Jira engasgar
+        jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=10)
         jql = f'assignee = currentUser() AND updated >= startOfMonth() ORDER BY updated DESC'
         issues = jira.search_issues(jql, maxResults=50)
         
@@ -161,30 +164,34 @@ def buscar_tarefas_jira_real(servidor, email, token):
                 "status": status_atual, "label": area_encontrada, "grupo": categorizar_projeto(area_encontrada)
             })
         return tarefas
-    except Exception as e:
-        # 🔥 Agora ele te avisa se o Token ou E-mail estiverem errados!
-        st.error(f"Erro ao conectar no Jira. O Token ou E-mail estão incorretos! Detalhe: {e}")
-        return []
+    except Exception:
+        # Se a pessoa mudou a senha do Jira no meio do mês e o cookie ficou velho, ele avisa
+        return "ERRO_AUTH"
 
-dados_salvos = carregar_dados_usuario()
-tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
+# 🔥 Mostra o spinner visual de carregamento pro usuário não achar que travou
+with st.spinner("Sincronizando tarefas com o Jira..."):
+    dados_salvos = carregar_dados_usuario()
+    tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
+
+# Se o cookie da pessoa "venceu" ou ela mudou a senha lá no Jira
+if tarefas_jira == "ERRO_AUTH":
+    cookie_manager.delete("jira_servidor", key="err_s")
+    cookie_manager.delete("jira_email", key="err_e")
+    cookie_manager.delete("jira_token", key="err_t")
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    time.sleep(0.5)
+    st.error("Sua sessão do Jira expirou ou o token foi revogado. Por favor, logue novamente.")
+    st.stop()
 
 # --- CABEÇALHO E LOGOUT ---
 col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
-    # Puxa os cookies para ver se eles realmente existem antes de apagar
-    cookies_atuais = cookie_manager.get_all()
-    
-    if type(cookies_atuais) == dict:
-        if "jira_servidor" in cookies_atuais: cookie_manager.delete("jira_servidor", key="del_s")
-        if "jira_email" in cookies_atuais: cookie_manager.delete("jira_email", key="del_e")
-        if "jira_token" in cookies_atuais: cookie_manager.delete("jira_token", key="del_t")
-    
-    # Limpa a memória da sessão
+    cookie_manager.delete("jira_servidor", key="del_s")
+    cookie_manager.delete("jira_email", key="del_e")
+    cookie_manager.delete("jira_token", key="del_t")
     for key in list(st.session_state.keys()): del st.session_state[key]
-    
     time.sleep(0.5)
     st.rerun()
 
@@ -202,7 +209,6 @@ c1, c2, c3 = st.columns(3)
 c1.metric("Total de Cenários", int(dados_salvos["Criados"].sum()) if not dados_salvos.empty else 0)
 c2.metric("Aprovados (Direto) ✅", int(dados_salvos["Sem_Correcao"].sum()) if not dados_salvos.empty else 0)
 c3.metric("Aprovados (Com Correção) ⚠️", int(dados_salvos["Com_Correcao"].sum()) if not dados_salvos.empty else 0)
-
 st.divider()
 
 col_esq, col_dir = st.columns(2)
@@ -214,7 +220,6 @@ with col_dir:
     st.subheader("📱 FV - FVT - AN")
     if not df_fv.empty: st.write(f"**Criados:** {int(df_fv['Criados'].sum())} | **Sem Corr:** {int(df_fv['Sem_Correcao'].sum())} | **Com Corr:** {int(df_fv['Com_Correcao'].sum())}")
     else: st.caption("Nenhum cenário salvo neste mês.")
-
 st.divider()
 
 # ==========================================
@@ -233,10 +238,8 @@ for tarefa in tarefas_jira:
     
     status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
     if status == "PUBLISHED" and status_anterior != "PUBLISHED":
-        if not ja_preenchido:
-            st.toast(f"🚀 **{chave} Publicada!** Preencha as métricas.", icon="🔔")
-        else:
-            st.toast(f"⚠️ **{chave} republicada!** Realize alterações se preciso!", icon="👀")
+        if not ja_preenchido: st.toast(f"🚀 **{chave} Publicada!** Preencha as métricas.", icon="🔔")
+        else: st.toast(f"⚠️ **{chave} republicada!** Realize alterações se preciso!", icon="👀")
     st.session_state.status_anterior[chave] = status
 
     is_done = status in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
@@ -272,9 +275,7 @@ for tarefa in tarefas_jira:
             col_btn1, col_btn2 = c4.columns(2)
             
             if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                # Comunica com a Planilha do Google para Salvar
                 salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual)
-                
                 st.session_state[edit_key] = False 
                 st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
                 st.rerun()
