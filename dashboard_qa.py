@@ -214,7 +214,17 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
 # ==========================================
 st.divider()
 
+# ==========================================
+# 📈 DASHBOARDS E GRÁFICOS VISUAIS
+# ==========================================
+st.divider()
+
 if not dados_salvos.empty:
+    # 🔥 AS DUAS LINHAS QUE FALTARAM AQUI! 
+    # (Elas separam a planilha principal nas duas áreas antes de fazer o gráfico)
+    df_b2b = dados_salvos[dados_salvos["Grupo"] == "B2B_CRM"]
+    df_fv = dados_salvos[dados_salvos["Grupo"] == "FV_FVT_AN"]
+
     st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
     c1, c2, c3 = st.columns(3)
     total_cr = int(dados_salvos["Criados"].sum())
