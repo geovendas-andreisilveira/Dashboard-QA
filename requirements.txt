@@ -6,3 +6,4 @@ extra-streamlit-components
 gspread
 altair
 xlsxwriter
+plotly
