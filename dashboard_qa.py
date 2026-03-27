@@ -45,7 +45,7 @@ def validar_credenciais_jira(servidor, email, token):
 cookie_manager = stx.CookieManager()
 cookies = cookie_manager.get_all()
 
-# 1. Tenta logar automático se o cookie existir e a sessão estiver vazia
+# 1. Tenta logar automático se o cookie existir
 if isinstance(cookies, dict):
     cookie_email = cookies.get("jira_email")
     cookie_token = cookies.get("jira_token")
@@ -75,11 +75,11 @@ if not st.session_state.get('jira_logado', False):
                 with st.spinner("Validando suas credenciais no Jira... Aguarde."):
                     if validar_credenciais_jira(servidor_input, email_input, token_input):
                         if lembrar:
-                            # Grava os cookies
-                            cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60)
-                            cookie_manager.set("jira_email", email_input, max_age=30*24*60*60)
-                            cookie_manager.set("jira_token", token_input, max_age=30*24*60*60)
-                            time.sleep(1) # Pausa pro navegador engolir o cookie
+                            # 🔥 AQUI ESTAVA O BUG ANTERIOR! Agora as keys estão blindadas.
+                            cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
+                            cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
+                            cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
+                            time.sleep(1) 
                         
                         st.session_state.jira_servidor = servidor_input
                         st.session_state.jira_email = email_input
@@ -108,7 +108,7 @@ def carregar_dados_usuario():
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip()
     
-    # Garante que a coluna desenvolvedor exista mesmo se a planilha for antiga
+    # Atualização de segurança para planilhas antigas
     if "Desenvolvedor" not in df.columns:
         df["Desenvolvedor"] = "Não Informado"
         
@@ -161,17 +161,15 @@ def buscar_tarefas_jira_real(servidor, email, token):
                             area_encontrada = str(val.value)
                             break
                             
-            # Caça o Desenvolvedor (Busca em campos de usuário ou texto)
+            # 🔥 CAÇA O DESENVOLVEDOR (Baseado na sua imagem)
             dev_encontrado = "Não Informado"
-            try:
-                # Tenta pegar um campo comum de Developer ou Custom Field
-                for field_name in dir(issue.fields):
+            for field_name in dir(issue.fields):
+                if field_name.startswith("customfield_"):
                     val = getattr(issue.fields, field_name)
-                    if val and hasattr(val, 'displayName') and field_name != 'assignee' and field_name != 'creator' and field_name != 'reporter':
+                    # Se o campo tiver 'displayName', é um campo de Usuário! (Igual ao Felipe Bogo da imagem)
+                    if val and hasattr(val, 'displayName'):
                         dev_encontrado = val.displayName
                         break
-            except:
-                pass
 
             tarefas.append({
                 "chave": issue.key, "resumo": issue.fields.summary,
@@ -187,27 +185,28 @@ with st.spinner("Sincronizando tarefas e gerando gráficos..."):
     dados_salvos = carregar_dados_usuario()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
+# Erro de Auth Implacável
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     if isinstance(cookies, dict):
-        cookie_manager.delete("jira_servidor")
-        cookie_manager.delete("jira_email")
-        cookie_manager.delete("jira_token")
+        if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="err_s")
+        if "jira_email" in cookies: cookie_manager.delete("jira_email", key="err_e")
+        if "jira_token" in cookies: cookie_manager.delete("jira_token", key="err_t")
     st.session_state.clear()
     time.sleep(1)
-    st.error(f"⚠️ Não foi possível conectar ao Jira. \nDetalhe do Erro: {tarefas_jira}")
+    st.error(f"⚠️ Não foi possível conectar ao Jira. A sessão expirou ou o token é inválido.")
     st.stop()
 
-# --- CABEÇALHO E LOGOUT IMPLACÁVEL ---
+# --- CABEÇALHO E LOGOUT ---
 col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA - Versão 2.0")
 
 if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
-    # Destrói os cookies e limpa a sessão para impedir o auto-login
-    cookie_manager.delete("jira_servidor")
-    cookie_manager.delete("jira_email")
-    cookie_manager.delete("jira_token")
+    if isinstance(cookies, dict):
+        if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
+        if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
+        if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
     st.session_state.clear()
-    time.sleep(1.5) # Pausa dramática pro navegador deletar tudo de verdade
+    time.sleep(1) 
     st.rerun()
 
 # ==========================================
@@ -216,14 +215,12 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
 st.divider()
 
 if not dados_salvos.empty:
-    # --- MÉTRICAS GERAIS ---
     st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
     c1, c2, c3 = st.columns(3)
     total_cr = int(dados_salvos["Criados"].sum())
     total_sc = int(dados_salvos["Sem_Correcao"].sum())
     total_cc = int(dados_salvos["Com_Correcao"].sum())
     
-    # Calcula a taxa de aprovação geral
     taxa_sucesso = (total_sc / total_cr * 100) if total_cr > 0 else 0
     
     c1.metric("Total de Cenários", total_cr)
@@ -232,36 +229,31 @@ if not dados_salvos.empty:
     
     st.write("")
     
-    # --- GRÁFICOS LINDOS E ESTATÍSTICAS DE DEVS ---
     col_grafico1, col_grafico2 = st.columns(2)
     
     with col_grafico1:
         st.markdown("#### 🏢 Qualidade por Área")
-        # Prepara os dados pro gráfico de barras
         df_areas = dados_salvos.groupby("Grupo")[["Sem_Correcao", "Com_Correcao"]].sum().reset_index()
         if not df_areas.empty:
             df_areas.set_index("Grupo", inplace=True)
-            st.bar_chart(df_areas, color=["#2e7b32", "#d4a017"]) # Verde e Amarelo ouro
+            st.bar_chart(df_areas, color=["#2e7b32", "#d4a017"]) 
             
     with col_grafico2:
-        st.markdown("#### 👨‍💻 Ranking de Qualidade dos Desenvolvedores")
+        st.markdown("#### 👨‍💻 Ranking de Qualidade dos Devs")
         df_devs = dados_salvos.groupby("Desenvolvedor")[["Criados", "Sem_Correcao"]].sum().reset_index()
         
-        # Calcula a taxa de acerto por Dev
-        df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"]) * 100
+        # 🔥 Prevenção de divisão por zero!
+        df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
         df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-        
-        # Ordena do melhor pro pior
         df_devs = df_devs.sort_values(by="Taxa de Acerto", ascending=False)
         
-        # Exibe o ranking bonitão em formato de Dataframe
         st.dataframe(
             df_devs[["Desenvolvedor", "Criados", "Taxa de Acerto"]].style.format({"Taxa de Acerto": "{:.1f}%"}),
             hide_index=True, use_container_width=True
         )
 
 else:
-    st.info("📊 Os gráficos aparecerão aqui assim que você registrar a primeira tarefa do mês.")
+    st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
 
 st.divider()
 
@@ -281,7 +273,6 @@ for tarefa in tarefas_jira:
     linha_dado = dados_salvos[dados_salvos["Task"] == chave]
     ja_preenchido = not linha_dado.empty
     
-    # Lógica de Notificação (Toast)
     status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
     if status == "PUBLISHED" and status_anterior != "PUBLISHED":
         if not ja_preenchido: st.toast(f"🚀 Tarefa {chave} liberada para QA!", icon="🔔")
@@ -297,7 +288,7 @@ for tarefa in tarefas_jira:
 
     with st.container(border=True):
         st.subheader(f"{chave} - {tarefa['resumo']}")
-        st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** {dev_responsavel}")
+        st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
 
         if ja_preenchido and not st.session_state[edit_key]:
             cr, sc, cc = int(linha_dado["Criados"].iloc[0]), int(linha_dado["Sem_Correcao"].iloc[0]), int(linha_dado["Com_Correcao"].iloc[0])
@@ -321,10 +312,9 @@ for tarefa in tarefas_jira:
             col_btn1, col_btn2 = c4.columns(2)
             
             if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                # O Dev Responsável agora é salvo direto no Google Sheets!
                 salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
                 st.session_state[edit_key] = False 
-                st.toast(f"Métricas da {chave} salvas com sucesso!", icon="✅")
+                st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
                 st.rerun()
 
             if st.session_state[edit_key]:
