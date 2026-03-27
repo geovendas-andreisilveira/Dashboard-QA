@@ -183,49 +183,81 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.stop()
 
 # --- CABEÇALHO E LOGOUT ---
-col_titulo, col_sair = st.columns([0.85, 0.15])
-col_titulo.title(f"📊 Painel de Controle QA - Versão 2.0")
+st.title(f"📊 Painel de Controle QA - Versão 2.0")
 
-if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
-    if isinstance(cookies, dict):
-        if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
-        if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
-        if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
-    st.session_state.clear()
-    time.sleep(1.5) 
-    st.rerun()
+# Movemos o botão de sair para o Menu Lateral (Sidebar) para limpar o topo da tela
+with st.sidebar:
+    st.markdown("### Configurações da Conta")
+    st.write(f"Logado como: `{usuario_atual}`")
+    if st.button("🚪 Sair do Sistema", use_container_width=True):
+        if isinstance(cookies, dict):
+            if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
+            if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
+            if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
+        st.session_state.clear()
+        time.sleep(1.5) 
+        st.rerun()
 
 # ==========================================
 # 📈 DASHBOARDS E GRÁFICOS VISUAIS
 # ==========================================
-st.divider()
 
 if not dados_salvos.empty:
-    # 🔥 A VOLTA DO FILTRO DE MÊS (Histórico)
-    # Descobre todos os meses que já têm dados na planilha do usuário
-    meses_disponiveis = sorted(dados_salvos["Mes"].unique(), reverse=True)
     
-    col_tit, col_filtro = st.columns([0.7, 0.3])
-    col_tit.subheader(f"🏆 Resumo do Mês")
-    mes_selecionado = col_filtro.selectbox("Selecione o Mês para Visualizar:", meses_disponiveis, index=0)
+    # --- PAINEL DE CONTROLE DO MÊS (FILTRO E DOWNLOAD) ---
+    with st.container(border=True):
+        col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
+        col_tit.subheader(f"🏆 Resumo do Mês")
+        
+        meses_disponiveis = sorted(dados_salvos["Mes"].unique(), reverse=True)
+        mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
 
-    # Filtra os dados SOMENTE para o mês que o líder escolheu olhar
-    df_mes = dados_salvos[dados_salvos["Mes"] == mes_selecionado]
+        # Filtra os dados SOMENTE para o mês selecionado
+        df_mes = dados_salvos[dados_salvos["Mes"] == mes_selecionado]
+        
+        # Gera o Excel dinâmico do mês selecionado
+        df_devs_excel = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+        df_devs_excel["Taxa de Acerto"] = (df_devs_excel["Sem_Correcao"] / df_devs_excel["Criados"].replace(0, 1)) * 100
+        
+        import io
+        def gerar_excel_relatorio():
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_devs_excel.to_excel(writer, sheet_name='Ranking Devs', index=False)
+                df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
+                df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
+                df_mes.to_excel(writer, sheet_name='Dados Completos', index=False)
+            return output.getvalue()
+
+        excel_data = gerar_excel_relatorio()
+        col_download.download_button(
+            label="📥 Baixar Excel do Mês",
+            data=excel_data,
+            file_name=f"Relatorio_QA_{mes_selecionado}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    st.write("") # Espaço para respirar
     
     df_b2b = df_mes[df_mes["Grupo"] == "B2B_CRM"]
     df_fv = df_mes[df_mes["Grupo"] == "FV_FVT_AN"]
 
-    c1, c2, c3 = st.columns(3)
-    total_cr = int(df_mes["Criados"].sum())
-    total_sc = int(df_mes["Sem_Correcao"].sum())
-    total_cc = int(df_mes["Com_Correcao"].sum())
-    
-    c1.metric("Total de Cenários (Geral)", total_cr)
-    c2.metric("Aprovados Direto ✅", total_sc)
-    c3.metric("Com Correção ⚠️", total_cc)
+    # --- MÉTRICAS GERAIS EM UM CARD ---
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        total_cr = int(df_mes["Criados"].sum())
+        total_sc = int(df_mes["Sem_Correcao"].sum())
+        total_cc = int(df_mes["Com_Correcao"].sum())
+        
+        c1.metric("Total de Cenários (Geral)", total_cr)
+        c2.metric("Aprovados Direto ✅", total_sc)
+        c3.metric("Com Correção ⚠️", total_cc)
     
     st.write("")
     
+    # --- GRÁFICOS DE DONUT (Com porcentagem por Categoria no Título!) ---
     col_graf_b2b, col_graf_fv = st.columns(2)
     
     def criar_grafico_donut(df_filtrado, titulo_base):
@@ -248,51 +280,34 @@ if not dados_salvos.empty:
         return chart
 
     with col_graf_b2b:
-        grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
-        if grafico_b2b: st.altair_chart(grafico_b2b, use_container_width=True)
-        else: st.caption("Sem dados para B2B.")
+        with st.container(border=True):
+            grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
+            if grafico_b2b: st.altair_chart(grafico_b2b, use_container_width=True)
+            else: st.caption("Sem dados para B2B.")
 
     with col_graf_fv:
-        grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
-        if grafico_fv: st.altair_chart(grafico_fv, use_container_width=True)
-        else: st.caption("Sem dados para FV.")
+        with st.container(border=True):
+            grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
+            if grafico_fv: st.altair_chart(grafico_fv, use_container_width=True)
+            else: st.caption("Sem dados para FV.")
 
     st.write("")
 
-    st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
-    
-    df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-    df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
-    df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-    
-    df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-    df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-    
-    st.dataframe(
-        df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}),
-        hide_index=True, use_container_width=True
-    )
-    
-    st.write("")
-    
-    def gerar_excel_relatorio():
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_devs.to_excel(writer, sheet_name='Ranking Devs', index=False)
-            df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-            df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
-            df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
-            df_mes.to_excel(writer, sheet_name='Dados Completos', index=False)
-        return output.getvalue()
-
-    excel_data = gerar_excel_relatorio()
-    st.download_button(
-        label=f"📥 Baixar Relatório (Excel) de {mes_selecionado}",
-        data=excel_data,
-        file_name=f"Relatorio_QA_{mes_selecionado}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    # --- RANKING DE QUALIDADE EM UM CARD ---
+    with st.container(border=True):
+        st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
+        
+        df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+        df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
+        df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
+        
+        df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
+        df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
+        
+        st.dataframe(
+            df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}),
+            hide_index=True, use_container_width=True
+        )
 
 else:
     st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
@@ -346,7 +361,6 @@ for tarefa in tarefas_jira:
             c_texto, c_botao = st.columns([0.8, 0.2])
             c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
             
-            # 🔥 Correção UX: Empurra o botão de editar para alinhar com o texto
             c_botao.write("") 
             if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
                 st.session_state[edit_key] = True
@@ -357,20 +371,17 @@ for tarefa in tarefas_jira:
             def_sc = int(linha_dado["Sem_Correcao"].iloc[0]) if ja_preenchido else 0
             def_cc = int(linha_dado["Com_Correcao"].iloc[0]) if ja_preenchido else 0
 
-            # 🔥 Correção UX: Ajustamos a largura das colunas. Os botões ficam numa coluna menor no final.
             c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.25, 0.25])
             
             criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
             sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
             com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
             
-            # 🔥 Correção UX: O botão de salvar e cancelar agora ficam perfeitamente alinhados na base
             c4.write("") 
             c4.write("") 
             col_btn1, col_btn2 = c4.columns(2)
             
             if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
-                # As tarefas novas SEMPRE são salvas com a string do mês atual!
                 salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
                 st.session_state[edit_key] = False 
                 st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
