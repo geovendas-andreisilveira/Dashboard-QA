@@ -76,7 +76,7 @@ if not st.session_state.get('jira_logado', False):
                 with st.spinner("Validando suas credenciais no Jira... Aguarde."):
                     if validar_credenciais_jira(servidor_input, email_input, token_input):
                         if lembrar:
-                            # 🔥 AQUI ESTAVA O BUG ANTERIOR! Agora as keys estão blindadas.
+                            # As chaves únicas garantem que o Streamlit não dê erro!
                             cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
                             cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
                             cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
@@ -109,7 +109,6 @@ def carregar_dados_usuario():
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip()
     
-    # Atualização de segurança para planilhas antigas
     if "Desenvolvedor" not in df.columns:
         df["Desenvolvedor"] = "Não Informado"
         
@@ -162,13 +161,13 @@ def buscar_tarefas_jira_real(servidor, email, token):
                             area_encontrada = str(val.value)
                             break
                             
-            # 🔥 CAÇA O DESENVOLVEDOR (Baseado na sua imagem)
+            # Caça o Desenvolvedor
             dev_encontrado = "Não Informado"
             for field_name in dir(issue.fields):
                 if field_name.startswith("customfield_"):
                     val = getattr(issue.fields, field_name)
-                    # Se o campo tiver 'displayName', é um campo de Usuário! (Igual ao Felipe Bogo da imagem)
-                    if val and hasattr(val, 'displayName'):
+                    # Verifica se tem 'displayName', ignorando os campos padrões do Jira
+                    if val and hasattr(val, 'displayName') and field_name not in ['assignee', 'creator', 'reporter']:
                         dev_encontrado = val.displayName
                         break
 
@@ -207,56 +206,8 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
         if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
         if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
     st.session_state.clear()
-    time.sleep(1) 
+    time.sleep(1.5) 
     st.rerun()
-
-# ==========================================
-# 📈 DASHBOARDS E GRÁFICOS VISUAIS
-# ==========================================
-st.divider()
-
-if not dados_salvos.empty:
-    st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
-    c1, c2, c3 = st.columns(3)
-    total_cr = int(dados_salvos["Criados"].sum())
-    total_sc = int(dados_salvos["Sem_Correcao"].sum())
-    total_cc = int(dados_salvos["Com_Correcao"].sum())
-    
-    taxa_sucesso = (total_sc / total_cr * 100) if total_cr > 0 else 0
-    
-    c1.metric("Total de Cenários", total_cr)
-    c2.metric("Aprovados Direto ✅", total_sc, f"{taxa_sucesso:.1f}% de Acerto")
-    c3.metric("Com Correção ⚠️", total_cc)
-    
-    st.write("")
-    
-    col_grafico1, col_grafico2 = st.columns(2)
-    
-    with col_grafico1:
-        st.markdown("#### 🏢 Qualidade por Área")
-        df_areas = dados_salvos.groupby("Grupo")[["Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-        if not df_areas.empty:
-            df_areas.set_index("Grupo", inplace=True)
-            st.bar_chart(df_areas, color=["#2e7b32", "#d4a017"]) 
-            
-    with col_grafico2:
-        st.markdown("#### 👨‍💻 Ranking de Qualidade dos Devs")
-        df_devs = dados_salvos.groupby("Desenvolvedor")[["Criados", "Sem_Correcao"]].sum().reset_index()
-        
-        # 🔥 Prevenção de divisão por zero!
-        df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
-        df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-        df_devs = df_devs.sort_values(by="Taxa de Acerto", ascending=False)
-        
-        st.dataframe(
-            df_devs[["Desenvolvedor", "Criados", "Taxa de Acerto"]].style.format({"Taxa de Acerto": "{:.1f}%"}),
-            hide_index=True, use_container_width=True
-        )
-
-else:
-    st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
-
-st.divider()
 
 # ==========================================
 # 📈 DASHBOARDS E GRÁFICOS VISUAIS
@@ -287,10 +238,8 @@ if not dados_salvos.empty:
         sc = int(df_filtrado["Sem_Correcao"].sum())
         cc = int(df_filtrado["Com_Correcao"].sum())
         
-        # Cria a base de dados para a Pizza
         source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
         
-        # Desenha o Donut usando Altair (Nativo do Streamlit)
         chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
             theta=alt.Theta(field="Quantidade", type="quantitative"),
             color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=["Aprovados ✅", "Com Correção ⚠️"], range=["#2e7b32", "#d4a017"])),
@@ -313,20 +262,14 @@ if not dados_salvos.empty:
     # --- RANKING DE QUALIDADE DO CHEFE (Por Área e Dev) ---
     st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
     
-    # Agrupa por Área E Desenvolvedor
     df_devs = dados_salvos.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
     
-    # Calcula a taxa de acerto blindada contra divisão por zero
     df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
     df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
     
-    # Renomeia as colunas para a tabela ficar bonita
     df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-    
-    # Ordena primeiro pela Área, e depois do melhor pro pior Dev dentro daquela área
     df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
     
-    # Exibe a tabela compacta
     st.dataframe(
         df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}),
         hide_index=True, use_container_width=True
