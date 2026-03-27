@@ -7,6 +7,7 @@ from streamlit_autorefresh import st_autorefresh
 import extra_streamlit_components as stx
 import json
 import gspread
+import time
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
@@ -44,8 +45,10 @@ if cookies:
         st.session_state.jira_email = cookie_email
         st.session_state.jira_token = cookie_token
         st.session_state.jira_logado = True
+        st.rerun() # Força o rerun automático para entrar liso
 
-if 'jira_logado' not in st.session_state:
+# Se NÃO estiver logado, mostra a tela de Login
+if not st.session_state.get('jira_logado', False):
     st.title("🔐 Login - Portal QA")
     st.write("Bem-vindo! Insira suas credenciais do Jira para acessar o painel.")
     
@@ -59,9 +62,13 @@ if 'jira_logado' not in st.session_state:
         if submit:
             if email_input and token_input:
                 if lembrar:
+                    # Salva os cookies com chaves únicas
                     cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
                     cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
                     cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
+                    
+                    # 🔥 A MÁGICA: Espera meio segundo pro navegador conseguir salvar a senha!
+                    time.sleep(0.5) 
                 
                 st.session_state.jira_servidor = servidor_input
                 st.session_state.jira_email = email_input
@@ -70,7 +77,11 @@ if 'jira_logado' not in st.session_state:
                 st.rerun()
             else:
                 st.error("Preencha o e-mail e o token para continuar.")
-    st.stop()
+    st.stop() # Trava aqui e não renderiza o resto da tela
+
+# ==========================================
+# TUDO ABAIXO SÓ RODA SE ESTIVER LOGADO
+# ==========================================
 
 # ==========================================
 # ⏱️ TEMPO REAL (Atualiza a cada 60s)
@@ -88,7 +99,12 @@ def carregar_dados_usuario():
     records = worksheet.get_all_records()
     if not records:
         return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo", "Usuario"])
+    
     df = pd.DataFrame(records)
+    
+    # 🔥 A VACINA: Remove qualquer espaço em branco invisível dos títulos!
+    df.columns = df.columns.str.strip()
+    
     # Filtra só o que é do usuário logado E do mês atual!
     df_usuario = df[(df["Usuario"] == usuario_atual) & (df["Mes"] == mes_atual_str)]
     return df_usuario
@@ -156,10 +172,16 @@ col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
+    # Pede pro navegador apagar as chaves e dá a chave única
     cookie_manager.delete("jira_servidor", key="del_s")
     cookie_manager.delete("jira_email", key="del_e")
     cookie_manager.delete("jira_token", key="del_t")
+    
+    # Limpa a memória do Python
     for key in list(st.session_state.keys()): del st.session_state[key]
+    
+    # 🔥 A MÁGICA: Espera meio segundo pro navegador conseguir apagar de verdade!
+    time.sleep(0.5)
     st.rerun()
 
 # ==========================================
