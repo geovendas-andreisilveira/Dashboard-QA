@@ -40,7 +40,7 @@ def validar_credenciais_jira(servidor, email, token):
         return False
 
 # ==========================================
-# 🍪 LÓGICA DE LOGIN ESTILO FACEBOOK
+# 🍪 LÓGICA DE LOGIN
 # ==========================================
 cookie_manager = stx.CookieManager()
 cookies = cookie_manager.get_all()
@@ -90,31 +90,26 @@ if not st.session_state.get('jira_logado', False):
     st.stop()
 
 # ==========================================
-# ⏱️ TEMPO REAL E DADOS
+# ⏱️ TEMPO REAL E DADOS (Gerais e Pessoais)
 # ==========================================
 st_autorefresh(interval=60000, limit=None, key="jira_refresh")
 
 mes_atual_str = datetime.now().strftime("%Y-%m")
 usuario_atual = st.session_state.jira_email
 
-def carregar_dados_usuario():
+def carregar_todos_dados():
     records = worksheet.get_all_records()
     if not records:
         return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo", "Usuario", "Desenvolvedor"])
-    
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip()
-    
     if "Desenvolvedor" not in df.columns:
         df["Desenvolvedor"] = "Não Informado"
-        
-    df_usuario = df[(df["Usuario"] == usuario_atual)]
-    return df_usuario
+    return df
 
 def salvar_task_no_sheets(task, criados, sem_c, com_c, mes, label, grupo, usuario, desenvolvedor):
     records = worksheet.get_all_records()
     df = pd.DataFrame(records)
-    
     row_idx = None
     if not df.empty and "Task" in df.columns:
         match = df[(df["Task"] == task) & (df["Usuario"] == usuario)]
@@ -139,17 +134,13 @@ def categorizar_projeto(nome_projeto):
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
-        
-        # 🔥 A TRAVA DE DATA: Nada que foi fechado/atualizado antes de Março de 2026 vai aparecer na tela.
         jql = f'assignee = currentUser() AND updated >= "2026-03-01" ORDER BY updated DESC'
-        
         issues = jira.search_issues(jql, maxResults=100) 
         
         tarefas = []
         for issue in issues:
             if getattr(issue.fields.issuetype, 'subtask', False): continue
             status_atual = str(issue.fields.status).upper()
-            
             area_encontrada = "Desconhecida"
             dev_encontrado = "Não Informado"
             
@@ -159,7 +150,6 @@ def buscar_tarefas_jira_real(servidor, email, token):
                     if val and hasattr(val, 'value'):
                         if any(x in str(val.value) for x in ["B2B", "CRM", "Força", "Analytics", "Têxtil"]):
                             area_encontrada = str(val.value)
-                            
                     if val and hasattr(val, 'displayName') and field_name not in ['assignee', 'creator', 'reporter']:
                         dev_encontrado = val.displayName
 
@@ -173,7 +163,11 @@ def buscar_tarefas_jira_real(servidor, email, token):
         return f"ERRO_AUTH: {str(e)}"
 
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
-    dados_completos_usuario = carregar_dados_usuario()
+    # Puxa a planilha inteira (Para a Visão do Chefe)
+    dados_completos_gerais = carregar_todos_dados()
+    # Filtra só as suas (Para a Visão Pessoal)
+    dados_completos_usuario = dados_completos_gerais[dados_completos_gerais["Usuario"] == usuario_atual] if not dados_completos_gerais.empty else pd.DataFrame()
+    
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
@@ -186,8 +180,8 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.error(f"⚠️ Não foi possível conectar ao Jira. A sessão expirou ou o token é inválido.")
     st.stop()
 
-# --- CABEÇALHO E LOGOUT (MENU LATERAL) ---
-st.title(f"📊 Painel de Controle QA - Versão 2.0")
+# --- CABEÇALHO E MENU LATERAL ---
+st.title(f"📊 Painel de Controle QA - Versão Gold 🏆")
 
 with st.sidebar:
     st.markdown("### Configurações da Conta")
@@ -201,272 +195,314 @@ with st.sidebar:
         time.sleep(1.5) 
         st.rerun()
 
-# ==========================================
-# 📈 DASHBOARDS E GRÁFICOS VISUAIS
-# ==========================================
 st.divider()
 
-if not dados_completos_usuario.empty:
+# ==========================================
+# 👑 GERADOR DA PLANILHA DO CHEFE (LÓGICA)
+# ==========================================
+def gerar_tabela_chefe(df_grupo):
+    if df_grupo.empty: return pd.DataFrame()
     
-    # --- PAINEL DE CONTROLE DO MÊS ---
-    with st.container(border=True):
-        col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
-        col_tit.subheader(f"🏆 Resumo do Mês")
-        
-        meses_disponiveis = sorted(dados_completos_usuario["Mes"].unique(), reverse=True)
-        mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
-
-        df_mes = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_selecionado]
-        
-        df_devs_excel = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-        df_devs_excel["Taxa de Acerto"] = (df_devs_excel["Sem_Correcao"] / df_devs_excel["Criados"].replace(0, 1)) * 100
-        
-        def gerar_excel_relatorio():
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_mes.to_excel(writer, sheet_name='Cenários Detalhados', index=False)
-                df_devs_excel.to_excel(writer, sheet_name='Ranking Devs', index=False)
-                df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-                df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
-                df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
-            return output.getvalue()
-
-        excel_data = gerar_excel_relatorio()
-        col_download.download_button(
-            label="📥 Baixar Excel do Mês",
-            data=excel_data,
-            file_name=f"Relatorio_QA_{mes_selecionado}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
-    st.write("") 
+    # Agrupa pelo QA e soma os dados
+    resumo = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+    # Pega só o primeiro nome do e-mail (ex: andrei.silveira -> Andrei)
+    resumo["QA Responsável"] = resumo["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
     
-    df_b2b = df_mes[df_mes["Grupo"] == "B2B_CRM"]
-    df_fv = df_mes[df_mes["Grupo"] == "FV_FVT_AN"]
+    resumo = resumo.rename(columns={
+        "Criados": "Total de Cenários Criados",
+        "Sem_Correcao": "Aprovados (Sem Correção)",
+        "Com_Correcao": "Aprovados (Com Correção)"
+    })
+    resumo["% de Sucesso Direto"] = (resumo["Aprovados (Sem Correção)"] / resumo["Total de Cenários Criados"].replace(0, 1)) * 100
+    
+    # Cria a linha de TOTAL
+    total_cr = resumo["Total de Cenários Criados"].sum()
+    total_sc = resumo["Aprovados (Sem Correção)"].sum()
+    total_cc = resumo["Aprovados (Com Correção)"].sum()
+    perc_total = (total_sc / total_cr * 100) if total_cr > 0 else 0
+    
+    linha_total = pd.DataFrame({
+        "QA Responsável": ["TOTAL"],
+        "Total de Cenários Criados": [total_cr],
+        "Aprovados (Sem Correção)": [total_sc],
+        "Aprovados (Com Correção)": [total_cc],
+        "% de Sucesso Direto": [perc_total]
+    })
+    
+    tabela_final = pd.concat([resumo, linha_total], ignore_index=True)
+    return tabela_final[["QA Responsável", "Total de Cenários Criados", "Aprovados (Sem Correção)", "Aprovados (Com Correção)", "% de Sucesso Direto"]]
 
-    with st.container(border=True):
-        c1, c2, c3 = st.columns(3)
-        total_cr = int(df_mes["Criados"].sum())
-        total_sc = int(df_mes["Sem_Correcao"].sum())
-        total_cc = int(df_mes["Com_Correcao"].sum())
+# ==========================================
+# 📑 ABAS (TABS) DO SISTEMA
+# ==========================================
+tab_pessoal, tab_equipe = st.tabs(["👤 Meu Painel (Tarefas e Gráficos)", "👑 Visão da Equipe (Gestão)"])
+
+# ------------------------------------------
+# ABA 2: VISÃO DA EQUIPE (A PLANILHA DO ALISON)
+# ------------------------------------------
+with tab_equipe:
+    st.header("🏢 Visão Geral de Produtividade da Equipe")
+    
+    if not dados_completos_gerais.empty:
+        meses_gerais = sorted(dados_completos_gerais["Mes"].unique(), reverse=True)
+        mes_filtro_equipe = st.selectbox("Filtrar Mês da Equipe:", meses_gerais, index=0)
         
-        c1.metric("Total de Cenários (Geral)", total_cr)
-        c2.metric("Aprovados Direto ✅", total_sc)
-        c3.metric("Com Correção ⚠️", total_cc)
-    
-    st.write("")
-    
-    col_graf_b2b, col_graf_fv = st.columns(2)
-    
-    def criar_grafico_donut(df_filtrado, titulo_base):
-        if df_filtrado.empty:
-            return None 
+        df_mes_equipe = dados_completos_gerais[dados_completos_gerais["Mes"] == mes_filtro_equipe]
         
-        cr = df_filtrado["Criados"].sum()
-        sc = df_filtrado["Sem_Correcao"].sum()
-        cc = df_filtrado["Com_Correcao"].sum()
-        taxa = (sc / cr * 100) if cr > 0 else 0
-        titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
-        source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
-        chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
-            theta=alt.Theta(field="Quantidade", type="quantitative"),
-            color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=["Aprovados ✅", "Com Correção ⚠️"], range=["#2e7b32", "#d4a017"])),
-            tooltip=['Status', 'Quantidade']
-        ).properties(title=titulo_com_taxa, height=220)
-        return chart
-
-    with col_graf_b2b:
-        with st.container(border=True):
-            grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
-            if grafico_b2b is not None:
-                st.altair_chart(grafico_b2b, use_container_width=True)
-            else:
-                st.caption("🏢 B2B CRM - Sem dados registrados neste mês.")
-
-    with col_graf_fv:
-        with st.container(border=True):
-            grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
-            if grafico_fv is not None:
-                st.altair_chart(grafico_fv, use_container_width=True)
-            else:
-                st.caption("📱 FV - FVT - AN - Sem dados registrados neste mês.")
-
-    st.write("")
-
-    with st.container(border=True):
-        st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
-        if not df_mes.empty:
-            df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-            df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
-            df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-            df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-            df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-            st.dataframe(df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        df_fv_equipe = df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"]
+        df_b2b_equipe = df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"]
+        
+        st.subheader("📱 FV - FVT - AN")
+        tabela_fv = gerar_tabela_chefe(df_fv_equipe)
+        if not tabela_fv.empty:
+            st.dataframe(tabela_fv.style.format({"% de Sucesso Direto": "{:.0f}%"}), hide_index=True, use_container_width=True)
         else:
-            st.caption("Sem dados suficientes para gerar o ranking neste mês.")
-
-    # ==========================================
-    # 🚨 ALERTA DE FECHAMENTO E BOTÃO DE E-MAIL (MAILTO)
-    # ==========================================
-    st.write("")
-    hoje = datetime.now()
-    ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
-    dias_para_fim = ultimo_dia - hoje.day
-
-    if dias_para_fim <= 5 and mes_selecionado == mes_atual_str:
-        with st.container(border=True):
-            st.warning(f"🚨 **Atenção:** Faltam {dias_para_fim} dias para o fechamento de {mes_selecionado}! Certifique-se de que todas as tarefas foram preenchidas.")
+            st.caption("Sem dados de equipe para FV neste mês.")
             
-            taxa_geral = (total_sc / total_cr * 100) if total_cr > 0 else 0
+        st.write("")
+        st.subheader("🏢 B2B - CRM")
+        tabela_b2b = gerar_tabela_chefe(df_b2b_equipe)
+        if not tabela_b2b.empty:
+            st.dataframe(tabela_b2b.style.format({"% de Sucesso Direto": "{:.0f}%"}), hide_index=True, use_container_width=True)
+        else:
+            st.caption("Sem dados de equipe para B2B neste mês.")
             
-            assunto = f"Relatório de Qualidade QA - {usuario_atual.split('@')[0].capitalize()} ({mes_selecionado})"
-            corpo = f"""Olá Gestor, tudo bem?
-
-Segue em anexo o relatório consolidado dos meus testes de Qualidade referentes ao mês de {mes_selecionado}.
-
-📊 Resumo de Produtividade:
-- Total de Cenários Testados: {total_cr}
-- Aprovados de Primeira: {total_sc}
-- Retornaram com Correção: {total_cc}
-- Minha Taxa de Acerto Direto: {taxa_geral:.1f}%
-
-O Excel em anexo contém 3 abas, incluindo todos os cenários detalhados e o Ranking de Qualidade por Desenvolvedor.
-
-Abraços,
-{usuario_atual.split('@')[0].capitalize()}"""
-
-            assunto_url = urllib.parse.quote(assunto)
-            corpo_url = urllib.parse.quote(corpo)
-            mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
-            
-            st.write("Baixe o Excel lá no topo e clique no botão abaixo para gerar o texto do e-mail:")
-            st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir meu E-mail (Outlook/Gmail) com o texto pronto</a>', unsafe_allow_html=True)
-
-
-else:
-    st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
-
-st.divider()
-
-# ==========================================
-# 📝 MODO MÁQUINA DO TEMPO (CARDS INTELIGENTES)
-# ==========================================
-
-# CENÁRIO A: O usuário está olhando o mês atual. Mostra as pendências!
-if mes_selecionado == mes_atual_str:
-    st.header(f"📝 Tarefas para Preencher ({mes_atual_str})")
-    termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo...)", "")
-    tarefas_exibidas = 0
-
-    if 'status_anterior' not in st.session_state:
-        st.session_state.status_anterior = {}
-
-    dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str] if not dados_completos_usuario.empty else pd.DataFrame()
-
-    for tarefa in tarefas_jira:
-        chave, status = tarefa["chave"], tarefa["status"]
-        dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
-        resumo = tarefa['resumo']
-        
-        if termo_pesquisa:
-            termo = termo_pesquisa.lower()
-            if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
-                continue 
-        
-        linha_geral = dados_completos_usuario[dados_completos_usuario["Task"] == chave] if not dados_completos_usuario.empty else pd.DataFrame()
-        ja_preenchido_geral = not linha_geral.empty
-        
-        if ja_preenchido_geral and linha_geral.iloc[0]["Mes"] != mes_atual_str:
-            continue
-
-        linha_dado_atual = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave] if not dados_salvos_mes_atual.empty else pd.DataFrame()
-        ja_preenchido_neste_mes = not linha_dado_atual.empty
-
-        status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
-        if status == "PUBLISHED" and status_anterior != "PUBLISHED":
-            if not ja_preenchido_neste_mes: st.toast(f"🚀 Tarefa {chave} liberada!", icon="🔔")
-        st.session_state.status_anterior[chave] = status
-
-        is_done = status in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
-        if not is_done and not ja_preenchido_neste_mes: continue 
-
-        tarefas_exibidas += 1
-        edit_key = f"edit_{chave}"
-        if edit_key not in st.session_state: st.session_state[edit_key] = False
-
-        with st.container(border=True):
-            
-            # Link clicável pro Jira!
-            link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
-            st.markdown(f"### [{chave}]({link_tarefa}) - {resumo}")
-            
-            st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
-
-            if ja_preenchido_neste_mes and not st.session_state[edit_key]:
-                cr, sc, cc = int(linha_dado_atual["Criados"].iloc[0]), int(linha_dado_atual["Sem_Correcao"].iloc[0]), int(linha_dado_atual["Com_Correcao"].iloc[0])
-                c_texto, c_botao = st.columns([0.8, 0.2])
-                c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
-                
-                c_botao.write("") 
-                if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
-                    st.session_state[edit_key] = True
-                    st.rerun()
-
-            else:
-                def_cr = int(linha_dado_atual["Criados"].iloc[0]) if ja_preenchido_neste_mes else 0
-                def_sc = int(linha_dado_atual["Sem_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
-                def_cc = int(linha_dado_atual["Com_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
-
-                # 🔥 O NOVO CAMPO DE MÊS DE REFERÊNCIA
-                meses_recentes = [(pd.to_datetime("today") - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(3)]
-                
-                c1, c2, c3, c4 = st.columns([0.20, 0.20, 0.20, 0.40])
-                criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
-                sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
-                com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
-                mes_referencia_input = c4.selectbox("Mês de Referência", meses_recentes, index=0, key=f"mes_ref_{chave}")
-                
-                st.write("") 
-                col_btn1, col_btn2 = st.columns([0.5, 0.5])
-                
-                if col_btn1.button("💾 Salvar Métricas", key=f"btn_salvar_{chave}", use_container_width=True):
-                    salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_referencia_input, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
-                    st.session_state[edit_key] = False 
-                    st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
-                    st.rerun()
-
-                if st.session_state[edit_key]:
-                    if col_btn2.button("❌ Cancelar", key=f"btn_cancel_{chave}", use_container_width=True):
-                        st.session_state[edit_key] = False
-                        st.rerun()
-
-    if tarefas_exibidas == 0:
-        if termo_pesquisa: st.warning("Nenhuma tarefa encontrada.")
-        else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
-
-# CENÁRIO B: O usuário selecionou um mês antigo. Mostra o Arquivo Morto!
-else:
-    st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado})")
-    st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
-    
-    termo_pesquisa = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado}...", "")
-    
-    if df_mes.empty:
-        st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado}.")
+        st.info("💡 Esta aba substitui a planilha manual do Excel. Os dados aqui são a soma do trabalho de todos os QAs logados no sistema.")
     else:
-        for idx, row in df_mes.iterrows():
-            chave = row["Task"]
-            dev = row["Desenvolvedor"]
+        st.warning("A base de dados geral está vazia.")
+
+# ------------------------------------------
+# ABA 1: MEU PAINEL (Gráficos e Tarefas Pessoais)
+# ------------------------------------------
+with tab_pessoal:
+    if not dados_completos_usuario.empty:
+        
+        # --- PAINEL DE CONTROLE DO MÊS ---
+        with st.container(border=True):
+            col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
+            col_tit.subheader(f"🏆 Meu Resumo")
+            
+            meses_disponiveis = sorted(dados_completos_usuario["Mes"].unique(), reverse=True)
+            mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
+
+            df_mes = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_selecionado]
+            
+            df_devs_excel = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+            df_devs_excel["Taxa de Acerto"] = (df_devs_excel["Sem_Correcao"] / df_devs_excel["Criados"].replace(0, 1)) * 100
+            
+            def gerar_excel_relatorio():
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_mes.to_excel(writer, sheet_name='Cenários Detalhados', index=False)
+                    df_devs_excel.to_excel(writer, sheet_name='Ranking Devs', index=False)
+                    df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                    df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
+                    df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
+                return output.getvalue()
+
+            excel_data = gerar_excel_relatorio()
+            col_download.download_button(
+                label="📥 Baixar Excel do Mês",
+                data=excel_data,
+                file_name=f"Relatorio_QA_{mes_selecionado}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        st.write("") 
+        
+        df_b2b = df_mes[df_mes["Grupo"] == "B2B_CRM"]
+        df_fv = df_mes[df_mes["Grupo"] == "FV_FVT_AN"]
+
+        with st.container(border=True):
+            c1, c2, c3 = st.columns(3)
+            total_cr = int(df_mes["Criados"].sum())
+            total_sc = int(df_mes["Sem_Correcao"].sum())
+            total_cc = int(df_mes["Com_Correcao"].sum())
+            
+            c1.metric("Total de Cenários (Geral)", total_cr)
+            c2.metric("Aprovados Direto ✅", total_sc)
+            c3.metric("Com Correção ⚠️", total_cc)
+        
+        st.write("")
+        
+        col_graf_b2b, col_graf_fv = st.columns(2)
+        
+        def criar_grafico_donut(df_filtrado, titulo_base):
+            if df_filtrado.empty:
+                return None 
+            cr = df_filtrado["Criados"].sum()
+            sc = df_filtrado["Sem_Correcao"].sum()
+            cc = df_filtrado["Com_Correcao"].sum()
+            taxa = (sc / cr * 100) if cr > 0 else 0
+            titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
+            source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
+            chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
+                theta=alt.Theta(field="Quantidade", type="quantitative"),
+                color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=["Aprovados ✅", "Com Correção ⚠️"], range=["#2e7b32", "#d4a017"])),
+                tooltip=['Status', 'Quantidade']
+            ).properties(title=titulo_com_taxa, height=220)
+            return chart
+
+        with col_graf_b2b:
+            with st.container(border=True):
+                grafico_b2b = criar_grafico_donut(df_b2b, "🏢 B2B CRM")
+                if grafico_b2b is not None: st.altair_chart(grafico_b2b, use_container_width=True)
+                else: st.caption("🏢 B2B CRM - Sem dados registrados neste mês.")
+
+        with col_graf_fv:
+            with st.container(border=True):
+                grafico_fv = criar_grafico_donut(df_fv, "📱 FV - FVT - AN")
+                if grafico_fv is not None: st.altair_chart(grafico_fv, use_container_width=True)
+                else: st.caption("📱 FV - FVT - AN - Sem dados registrados neste mês.")
+
+        st.write("")
+
+        with st.container(border=True):
+            st.markdown("#### 👨‍💻 Meu Ranking de Qualidade (Por Área e Desenvolvedor)")
+            if not df_mes.empty:
+                df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
+                df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
+                df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
+                df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
+                st.dataframe(df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sem dados suficientes para gerar o ranking neste mês.")
+
+        # ==========================================
+        # 🚨 ALERTA E E-MAIL MAILTO
+        # ==========================================
+        st.write("")
+        hoje = datetime.now()
+        ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
+        dias_para_fim = ultimo_dia - hoje.day
+
+        if dias_para_fim <= 5 and mes_selecionado == mes_atual_str:
+            with st.container(border=True):
+                st.warning(f"🚨 **Atenção:** Faltam {dias_para_fim} dias para o fechamento de {mes_selecionado}! Certifique-se de preencher as tarefas abaixo.")
+                taxa_geral = (total_sc / total_cr * 100) if total_cr > 0 else 0
+                
+                assunto = f"Relatório de Qualidade QA - {usuario_atual.split('@')[0].capitalize()} ({mes_selecionado})"
+                corpo = f"Olá Gestor, tudo bem?\n\nSegue em anexo o relatório dos meus testes referentes a {mes_selecionado}.\n\n📊 Resumo:\n- Total Criados: {total_cr}\n- Aprovados Direto: {total_sc}\n- Com Correção: {total_cc}\n- Taxa de Acerto: {taxa_geral:.1f}%\n\nO Excel em anexo contém todos os cenários.\nAbraços,\n{usuario_atual.split('@')[0].capitalize()}"
+                
+                assunto_url = urllib.parse.quote(assunto)
+                corpo_url = urllib.parse.quote(corpo)
+                mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
+                
+                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail com Texto Pronto</a>', unsafe_allow_html=True)
+
+    else:
+        st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
+
+    st.divider()
+
+    # ==========================================
+    # 📝 MODO MÁQUINA DO TEMPO (CARDS)
+    # ==========================================
+    if not dados_completos_usuario.empty and mes_selecionado != mes_atual_str:
+        st.header(f"🗄️ Histórico de Tarefas Salvas ({mes_selecionado})")
+        st.caption("Você está visualizando o arquivo morto.")
+        termo_pesquisa = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado}...", "")
+        
+        if df_mes.empty:
+            st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado}.")
+        else:
+            for idx, row in df_mes.iterrows():
+                chave = row["Task"]
+                dev = row["Desenvolvedor"]
+                if termo_pesquisa:
+                    termo = termo_pesquisa.lower()
+                    if termo not in chave.lower() and termo not in dev.lower(): continue
+                        
+                with st.container(border=True):
+                    link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
+                    st.markdown(f"### ✅ [{chave}]({link_tarefa})")
+                    st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dev}`")
+                    st.success(f"Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
+
+    # MÊS ATUAL - TAREFAS PARA PREENCHER
+    else:
+        st.header(f"📝 Tarefas para Preencher ({mes_atual_str})")
+        termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo...)", "")
+        tarefas_exibidas = 0
+
+        if 'status_anterior' not in st.session_state:
+            st.session_state.status_anterior = {}
+
+        dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str] if not dados_completos_usuario.empty else pd.DataFrame()
+
+        for tarefa in tarefas_jira:
+            chave, status = tarefa["chave"], tarefa["status"]
+            dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
+            resumo = tarefa['resumo']
             
             if termo_pesquisa:
                 termo = termo_pesquisa.lower()
-                if termo not in chave.lower() and termo not in dev.lower():
-                    continue
-                    
+                if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower(): continue 
+            
+            linha_geral = dados_completos_gerais[(dados_completos_gerais["Task"] == chave) & (dados_completos_gerais["Usuario"] == usuario_atual)] if not dados_completos_gerais.empty else pd.DataFrame()
+            ja_preenchido_geral = not linha_geral.empty
+            
+            if ja_preenchido_geral and linha_geral.iloc[0]["Mes"] != mes_atual_str: continue
+
+            linha_dado_atual = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave] if not dados_salvos_mes_atual.empty else pd.DataFrame()
+            ja_preenchido_neste_mes = not linha_dado_atual.empty
+
+            status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
+            if status == "PUBLISHED" and status_anterior != "PUBLISHED":
+                if not ja_preenchido_neste_mes: st.toast(f"🚀 Tarefa {chave} liberada!", icon="🔔")
+            st.session_state.status_anterior[chave] = status
+
+            is_done = status in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
+            if not is_done and not ja_preenchido_neste_mes: continue 
+
+            tarefas_exibidas += 1
+            edit_key = f"edit_{chave}"
+            if edit_key not in st.session_state: st.session_state[edit_key] = False
+
             with st.container(border=True):
                 link_tarefa = f"{st.session_state.jira_servidor}/browse/{chave}"
-                st.markdown(f"### ✅ [{chave}]({link_tarefa})")
-                
-                st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dev}`")
-                st.success(f"Registrado em {mes_selecionado} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
+                st.markdown(f"### [{chave}]({link_tarefa}) - {resumo}")
+                st.write(f"**Status:** `{status}` | **Área:** {tarefa['label']} | 👨‍💻 **Dev:** `{dev_responsavel}`")
+
+                if ja_preenchido_neste_mes and not st.session_state[edit_key]:
+                    cr, sc, cc = int(linha_dado_atual["Criados"].iloc[0]), int(linha_dado_atual["Sem_Correcao"].iloc[0]), int(linha_dado_atual["Com_Correcao"].iloc[0])
+                    c_texto, c_botao = st.columns([0.8, 0.2])
+                    c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
+                    
+                    c_botao.write("") 
+                    if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
+                        st.session_state[edit_key] = True
+                        st.rerun()
+
+                else:
+                    def_cr = int(linha_dado_atual["Criados"].iloc[0]) if ja_preenchido_neste_mes else 0
+                    def_sc = int(linha_dado_atual["Sem_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
+                    def_cc = int(linha_dado_atual["Com_Correcao"].iloc[0]) if ja_preenchido_neste_mes else 0
+
+                    meses_recentes = [(pd.to_datetime("today") - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(3)]
+                    
+                    c1, c2, c3, c4 = st.columns([0.20, 0.20, 0.20, 0.40])
+                    criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
+                    sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
+                    com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
+                    mes_referencia_input = c4.selectbox("Mês Referência", meses_recentes, index=0, key=f"mes_ref_{chave}")
+                    
+                    st.write("") 
+                    col_btn1, col_btn2 = st.columns([0.5, 0.5])
+                    
+                    if col_btn1.button("💾 Salvar Métricas", key=f"btn_salvar_{chave}", use_container_width=True):
+                        salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_referencia_input, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
+                        st.session_state[edit_key] = False 
+                        st.toast(f"Métricas salvas na Nuvem!", icon="☁️")
+                        st.rerun()
+
+                    if st.session_state[edit_key]:
+                        if col_btn2.button("❌ Cancelar", key=f"btn_cancel_{chave}", use_container_width=True):
+                            st.session_state[edit_key] = False
+                            st.rerun()
+
+        if tarefas_exibidas == 0:
+            if termo_pesquisa: st.warning("Nenhuma tarefa encontrada.")
+            else: st.info("🎉 Nenhuma tarefa aguardando preenchimento no momento. Tudo limpo!")
