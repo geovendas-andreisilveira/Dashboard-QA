@@ -201,14 +201,24 @@ if col_sair.button("🚪 Sair do Sistema", use_container_width=True):
 st.divider()
 
 if not dados_salvos.empty:
-    st.subheader(f"🏆 Resumo do Mês ({mes_atual_str})")
-    df_b2b = dados_salvos[dados_salvos["Grupo"] == "B2B_CRM"]
-    df_fv = dados_salvos[dados_salvos["Grupo"] == "FV_FVT_AN"]
+    # 🔥 A VOLTA DO FILTRO DE MÊS (Histórico)
+    # Descobre todos os meses que já têm dados na planilha do usuário
+    meses_disponiveis = sorted(dados_salvos["Mes"].unique(), reverse=True)
+    
+    col_tit, col_filtro = st.columns([0.7, 0.3])
+    col_tit.subheader(f"🏆 Resumo do Mês")
+    mes_selecionado = col_filtro.selectbox("Selecione o Mês para Visualizar:", meses_disponiveis, index=0)
+
+    # Filtra os dados SOMENTE para o mês que o líder escolheu olhar
+    df_mes = dados_salvos[dados_salvos["Mes"] == mes_selecionado]
+    
+    df_b2b = df_mes[df_mes["Grupo"] == "B2B_CRM"]
+    df_fv = df_mes[df_mes["Grupo"] == "FV_FVT_AN"]
 
     c1, c2, c3 = st.columns(3)
-    total_cr = int(dados_salvos["Criados"].sum())
-    total_sc = int(dados_salvos["Sem_Correcao"].sum())
-    total_cc = int(dados_salvos["Com_Correcao"].sum())
+    total_cr = int(df_mes["Criados"].sum())
+    total_sc = int(df_mes["Sem_Correcao"].sum())
+    total_cc = int(df_mes["Com_Correcao"].sum())
     
     c1.metric("Total de Cenários (Geral)", total_cr)
     c2.metric("Aprovados Direto ✅", total_sc)
@@ -251,7 +261,7 @@ if not dados_salvos.empty:
 
     st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
     
-    df_devs = dados_salvos.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+    df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
     df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
     df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
     
@@ -269,17 +279,17 @@ if not dados_salvos.empty:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_devs.to_excel(writer, sheet_name='Ranking Devs', index=False)
-            df_resumo_area = dados_salvos.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+            df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
             df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
             df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
-            dados_salvos.to_excel(writer, sheet_name='Dados Completos', index=False)
+            df_mes.to_excel(writer, sheet_name='Dados Completos', index=False)
         return output.getvalue()
 
     excel_data = gerar_excel_relatorio()
     st.download_button(
-        label="📥 Baixar Relatório do Mês (Excel)",
+        label=f"📥 Baixar Relatório (Excel) de {mes_selecionado}",
         data=excel_data,
-        file_name=f"Relatorio_QA_{mes_atual_str}.xlsx",
+        file_name=f"Relatorio_QA_{mes_selecionado}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
@@ -290,11 +300,10 @@ else:
 st.divider()
 
 # ==========================================
-# 📝 TAREFAS E PREENCHIMENTO COM PESQUISA
+# 📝 TAREFAS E PREENCHIMENTO COM PESQUISA E UX MELHORADO
 # ==========================================
-st.header("📝 Tarefas para Preencher")
+st.header("📝 Tarefas para Preencher (Mês Atual)")
 
-# 🔥 A BARRA DE PESQUISA!
 termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
 
 tarefas_exibidas = 0
@@ -307,11 +316,10 @@ for tarefa in tarefas_jira:
     dev_responsavel = tarefa.get("desenvolvedor", "Não Informado")
     resumo = tarefa['resumo']
     
-    # Lógica do Filtro de Pesquisa (ignora maiúscula/minúscula)
     if termo_pesquisa:
         termo = termo_pesquisa.lower()
         if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
-            continue # Pula essa tarefa se não bater com a pesquisa
+            continue 
     
     linha_dado = dados_salvos[dados_salvos["Task"] == chave]
     ja_preenchido = not linha_dado.empty
@@ -337,6 +345,9 @@ for tarefa in tarefas_jira:
             cr, sc, cc = int(linha_dado["Criados"].iloc[0]), int(linha_dado["Sem_Correcao"].iloc[0]), int(linha_dado["Com_Correcao"].iloc[0])
             c_texto, c_botao = st.columns([0.8, 0.2])
             c_texto.success(f"✅ **Registrado** | Criados: **{cr}** | Sem Corr.: **{sc}** | Com Corr.: **{cc}**")
+            
+            # 🔥 Correção UX: Empurra o botão de editar para alinhar com o texto
+            c_botao.write("") 
             if c_botao.button("✏️ Editar", key=f"btn_edit_{chave}", use_container_width=True, disabled=not is_done):
                 st.session_state[edit_key] = True
                 st.rerun()
@@ -346,15 +357,20 @@ for tarefa in tarefas_jira:
             def_sc = int(linha_dado["Sem_Correcao"].iloc[0]) if ja_preenchido else 0
             def_cc = int(linha_dado["Com_Correcao"].iloc[0]) if ja_preenchido else 0
 
-            c1, c2, c3, c4 = st.columns(4)
+            # 🔥 Correção UX: Ajustamos a largura das colunas. Os botões ficam numa coluna menor no final.
+            c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.25, 0.25])
+            
             criados_input = c1.number_input("Criados", min_value=0, step=1, value=def_cr, key=f"cr_{chave}")
             sem_corr_input = c2.number_input("Sem Correção", min_value=0, step=1, value=def_sc, key=f"sc_{chave}")
             com_corr_input = c3.number_input("Com Correção", min_value=0, step=1, value=def_cc, key=f"cc_{chave}")
             
-            st.write("") 
+            # 🔥 Correção UX: O botão de salvar e cancelar agora ficam perfeitamente alinhados na base
+            c4.write("") 
+            c4.write("") 
             col_btn1, col_btn2 = c4.columns(2)
             
             if col_btn1.button("💾 Salvar", key=f"btn_salvar_{chave}", use_container_width=True):
+                # As tarefas novas SEMPRE são salvas com a string do mês atual!
                 salvar_task_no_sheets(chave, criados_input, sem_corr_input, com_corr_input, mes_atual_str, tarefa['label'], tarefa['grupo'], usuario_atual, dev_responsavel)
                 st.session_state[edit_key] = False 
                 st.toast(f"Métricas da {chave} salvas na Nuvem!", icon="☁️")
