@@ -10,6 +10,7 @@ import gspread
 import time
 import altair as alt
 import io
+import urllib.parse
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
@@ -107,7 +108,7 @@ def carregar_dados_usuario():
     if "Desenvolvedor" not in df.columns:
         df["Desenvolvedor"] = "Não Informado"
         
-    df_usuario = df[(df["Usuario"] == usuario_atual) & (df["Mes"] == mes_atual_str)]
+    df_usuario = df[(df["Usuario"] == usuario_atual)]
     return df_usuario
 
 def salvar_task_no_sheets(task, criados, sem_c, com_c, mes, label, grupo, usuario, desenvolvedor):
@@ -169,7 +170,7 @@ def buscar_tarefas_jira_real(servidor, email, token):
         return f"ERRO_AUTH: {str(e)}"
 
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
-    dados_salvos = carregar_dados_usuario()
+    dados_completos_usuario = carregar_dados_usuario()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
@@ -182,10 +183,9 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.error(f"⚠️ Não foi possível conectar ao Jira. A sessão expirou ou o token é inválido.")
     st.stop()
 
-# --- CABEÇALHO E LOGOUT ---
+# --- CABEÇALHO E LOGOUT (MENU LATERAL) ---
 st.title(f"📊 Painel de Controle QA - Versão 2.0")
 
-# Movemos o botão de sair para o Menu Lateral (Sidebar) para limpar o topo da tela
 with st.sidebar:
     st.markdown("### Configurações da Conta")
     st.write(f"Logado como: `{usuario_atual}`")
@@ -201,33 +201,31 @@ with st.sidebar:
 # ==========================================
 # 📈 DASHBOARDS E GRÁFICOS VISUAIS
 # ==========================================
+st.divider()
 
-if not dados_salvos.empty:
+if not dados_completos_usuario.empty:
     
-    # --- PAINEL DE CONTROLE DO MÊS (FILTRO E DOWNLOAD) ---
+    # --- PAINEL DE CONTROLE DO MÊS ---
     with st.container(border=True):
         col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
         col_tit.subheader(f"🏆 Resumo do Mês")
         
-        meses_disponiveis = sorted(dados_salvos["Mes"].unique(), reverse=True)
+        meses_disponiveis = sorted(dados_completos_usuario["Mes"].unique(), reverse=True)
         mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
 
-        # Filtra os dados SOMENTE para o mês selecionado
-        df_mes = dados_salvos[dados_salvos["Mes"] == mes_selecionado]
+        df_mes = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_selecionado]
         
-        # Gera o Excel dinâmico do mês selecionado
         df_devs_excel = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
         df_devs_excel["Taxa de Acerto"] = (df_devs_excel["Sem_Correcao"] / df_devs_excel["Criados"].replace(0, 1)) * 100
         
-        import io
         def gerar_excel_relatorio():
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_mes.to_excel(writer, sheet_name='Cenários Detalhados', index=False)
                 df_devs_excel.to_excel(writer, sheet_name='Ranking Devs', index=False)
                 df_resumo_area = df_mes.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
                 df_resumo_area["Taxa de Acerto"] = (df_resumo_area["Sem_Correcao"] / df_resumo_area["Criados"].replace(0, 1)) * 100
                 df_resumo_area.to_excel(writer, sheet_name='Resumo Área', index=False)
-                df_mes.to_excel(writer, sheet_name='Dados Completos', index=False)
             return output.getvalue()
 
         excel_data = gerar_excel_relatorio()
@@ -239,12 +237,11 @@ if not dados_salvos.empty:
             use_container_width=True
         )
 
-    st.write("") # Espaço para respirar
+    st.write("") 
     
     df_b2b = df_mes[df_mes["Grupo"] == "B2B_CRM"]
     df_fv = df_mes[df_mes["Grupo"] == "FV_FVT_AN"]
 
-    # --- MÉTRICAS GERAIS EM UM CARD ---
     with st.container(border=True):
         c1, c2, c3 = st.columns(3)
         total_cr = int(df_mes["Criados"].sum())
@@ -257,20 +254,16 @@ if not dados_salvos.empty:
     
     st.write("")
     
-    # --- GRÁFICOS DE DONUT (Com porcentagem por Categoria no Título!) ---
     col_graf_b2b, col_graf_fv = st.columns(2)
     
     def criar_grafico_donut(df_filtrado, titulo_base):
         if df_filtrado.empty:
             return None, titulo_base + " (Sem dados)"
-        
         cr = df_filtrado["Criados"].sum()
         sc = df_filtrado["Sem_Correcao"].sum()
         cc = df_filtrado["Com_Correcao"].sum()
-        
         taxa = (sc / cr * 100) if cr > 0 else 0
         titulo_com_taxa = f"{titulo_base} - {taxa:.1f}% de Acerto"
-        
         source = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
         chart = alt.Chart(source).mark_arc(innerRadius=40).encode(
             theta=alt.Theta(field="Quantidade", type="quantitative"),
@@ -293,21 +286,52 @@ if not dados_salvos.empty:
 
     st.write("")
 
-    # --- RANKING DE QUALIDADE EM UM CARD ---
     with st.container(border=True):
         st.markdown("#### 👨‍💻 Ranking de Qualidade (Por Área e Desenvolvedor)")
-        
         df_devs = df_mes.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
         df_devs["Taxa de Acerto"] = (df_devs["Sem_Correcao"] / df_devs["Criados"].replace(0, 1)) * 100
         df_devs["Taxa de Acerto"] = df_devs["Taxa de Acerto"].fillna(0).round(1)
-        
         df_devs = df_devs.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
         df_devs = df_devs.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-        
-        st.dataframe(
-            df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}),
-            hide_index=True, use_container_width=True
-        )
+        st.dataframe(df_devs.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+
+    # ==========================================
+    # 🚨 ALERTA DE FECHAMENTO E BOTÃO DE E-MAIL (MAILTO)
+    # ==========================================
+    st.write("")
+    hoje = datetime.now()
+    ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
+    dias_para_fim = ultimo_dia - hoje.day
+
+    if dias_para_fim <= 5 and mes_selecionado == mes_atual_str:
+        with st.container(border=True):
+            st.warning(f"🚨 **Atenção:** Faltam {dias_para_fim} dias para o fechamento de {mes_selecionado}! Certifique-se de que todas as tarefas foram preenchidas.")
+            
+            taxa_geral = (total_sc / total_cr * 100) if total_cr > 0 else 0
+            
+            assunto = f"Relatório de Qualidade QA - {usuario_atual.split('@')[0].capitalize()} ({mes_selecionado})"
+            corpo = f"""Olá Gestor, tudo bem?
+
+Segue em anexo o relatório consolidado dos meus testes de Qualidade referentes ao mês de {mes_selecionado}.
+
+📊 Resumo de Produtividade:
+- Total de Cenários Testados: {total_cr}
+- Aprovados de Primeira: {total_sc}
+- Retornaram com Correção: {total_cc}
+- Minha Taxa de Acerto Direto: {taxa_geral:.1f}%
+
+O Excel em anexo contém 3 abas, incluindo todos os cenários detalhados e o Ranking de Qualidade por Desenvolvedor.
+
+Abraços,
+{usuario_atual.split('@')[0].capitalize()}"""
+
+            assunto_url = urllib.parse.quote(assunto)
+            corpo_url = urllib.parse.quote(corpo)
+            mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
+            
+            st.write("Baixe o Excel lá no topo e clique no botão abaixo para gerar o texto do e-mail:")
+            st.markdown(f'<a href="{mailto_link}" target="_blank" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir meu E-mail (Outlook/Gmail) com o texto pronto</a>', unsafe_allow_html=True)
+
 
 else:
     st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
@@ -317,7 +341,7 @@ st.divider()
 # ==========================================
 # 📝 TAREFAS E PREENCHIMENTO COM PESQUISA E UX MELHORADO
 # ==========================================
-st.header("📝 Tarefas para Preencher (Mês Atual)")
+st.header(f"📝 Tarefas para Preencher (Apenas {mes_atual_str})")
 
 termo_pesquisa = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
 
@@ -325,6 +349,9 @@ tarefas_exibidas = 0
 
 if 'status_anterior' not in st.session_state:
     st.session_state.status_anterior = {}
+
+# O preenchimento sempre olha pros dados totais do usuário, mas filtrando pelo mês atual para não salvar errado
+dados_salvos_mes_atual = dados_completos_usuario[dados_completos_usuario["Mes"] == mes_atual_str]
 
 for tarefa in tarefas_jira:
     chave, status = tarefa["chave"], tarefa["status"]
@@ -336,7 +363,7 @@ for tarefa in tarefas_jira:
         if termo not in chave.lower() and termo not in dev_responsavel.lower() and termo not in resumo.lower():
             continue 
     
-    linha_dado = dados_salvos[dados_salvos["Task"] == chave]
+    linha_dado = dados_salvos_mes_atual[dados_salvos_mes_atual["Task"] == chave]
     ja_preenchido = not linha_dado.empty
     
     status_anterior = st.session_state.status_anterior.get(chave, "DESCONHECIDO")
