@@ -173,12 +173,20 @@ with st.spinner("Sincronizando tarefas com o Jira..."):
     dados_salvos = carregar_dados_usuario()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
-# Se o cookie da pessoa "venceu" ou ela mudou a senha lá no Jira
+# Se o cookie da pessoa "venceu" ou ela mudou a senha lá no Jira, limpamos e pedimos login
 if tarefas_jira == "ERRO_AUTH":
-    cookie_manager.delete("jira_servidor", key="err_s")
-    cookie_manager.delete("jira_email", key="err_e")
-    cookie_manager.delete("jira_token", key="err_t")
+    # 🔥 A CORREÇÃO: Adiciona verificações de segurança antes de tentar deletar os cookies
+    cookies_para_auto_del = cookie_manager.get_all()
+    
+    # Garante que é um dicionário e só deleta se a chave existir
+    if isinstance(cookies_para_auto_del, dict):
+        if "jira_servidor" in cookies_para_auto_del: cookie_manager.delete("jira_servidor", key="auto_err_s")
+        if "jira_email" in cookies_para_auto_del: cookie_manager.delete("jira_email", key="auto_err_e")
+        if "jira_token" in cookies_para_auto_del: cookie_manager.delete("jira_token", key="auto_err_t")
+    
+    # Limpa a memória da sessão do Python
     for key in list(st.session_state.keys()): del st.session_state[key]
+    
     time.sleep(0.5)
     st.error("Sua sessão do Jira expirou ou o token foi revogado. Por favor, logue novamente.")
     st.stop()
