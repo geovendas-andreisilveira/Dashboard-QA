@@ -52,9 +52,10 @@ if cookies:
     cookie_servidor = cookies.get("jira_servidor")
 
     if cookie_email and cookie_token and 'jira_logado' not in st.session_state:
-        st.session_state.jira_servidor = cookie_servidor
-        st.session_state.jira_email = cookie_email
-        st.session_state.jira_token = cookie_token
+        # 🔥 A VACINA DO COOKIE: Tira qualquer aspas invisível do começo ou fim
+        st.session_state.jira_servidor = str(cookie_servidor).strip('"')
+        st.session_state.jira_email = str(cookie_email).strip('"')
+        st.session_state.jira_token = str(cookie_token).strip('"')
         st.session_state.jira_logado = True
         st.rerun()
 
@@ -141,8 +142,8 @@ def categorizar_projeto(nome_projeto):
 @st.cache_data(ttl=55) 
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
-        # Coloquei timeout de 10s para ele não ficar rodando infinito se a API do Jira engasgar
-        jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=10)
+        # Aumentei o timeout para 15s pra dar tempo de respirar se o Jira tiver lento
+        jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
         jql = f'assignee = currentUser() AND updated >= startOfMonth() ORDER BY updated DESC'
         issues = jira.search_issues(jql, maxResults=50)
         
@@ -164,29 +165,27 @@ def buscar_tarefas_jira_real(servidor, email, token):
                 "status": status_atual, "label": area_encontrada, "grupo": categorizar_projeto(area_encontrada)
             })
         return tarefas
-    except Exception:
-        # Se a pessoa mudou a senha do Jira no meio do mês e o cookie ficou velho, ele avisa
-        return "ERRO_AUTH"
+    except Exception as e:
+        # 🔥 Agora ele devolve o erro REAL do Jira pra gente saber o que aconteceu
+        return f"ERRO_AUTH: {str(e)}"
 
-# 🔥 Mostra o spinner visual de carregamento pro usuário não achar que travou
+# Mostra o spinner visual de carregamento
 with st.spinner("Sincronizando tarefas com o Jira..."):
     dados_salvos = carregar_dados_usuario()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
-# Se o cookie da pessoa "venceu" ou ela mudou a senha lá no Jira
-if tarefas_jira == "ERRO_AUTH":
-    
-    # 🔥 A CORREÇÃO: Usamos a variável 'cookies' que já foi carregada lá no topo do código!
+# Se o Jira rejeitou a conexão ou deu timeout
+if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     if isinstance(cookies, dict):
         if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="auto_err_s")
         if "jira_email" in cookies: cookie_manager.delete("jira_email", key="auto_err_e")
         if "jira_token" in cookies: cookie_manager.delete("jira_token", key="auto_err_t")
     
-    # Limpa a memória da sessão do Python
     for key in list(st.session_state.keys()): del st.session_state[key]
     
     time.sleep(0.5)
-    st.error("Sua sessão do Jira expirou ou o token foi revogado. Por favor, logue novamente.")
+    # 🔥 Exibe na tela o MOTIVO exato do erro!
+    st.error(f"⚠️ Não foi possível conectar ao Jira. \nDetalhe do Erro: {tarefas_jira}")
     st.stop()
 
 # --- CABEÇALHO E LOGOUT ---
@@ -194,10 +193,15 @@ col_titulo, col_sair = st.columns([0.85, 0.15])
 col_titulo.title(f"📊 Painel de Controle QA")
 
 if col_sair.button("🚪 Sair", use_container_width=True):
-    cookie_manager.delete("jira_servidor", key="del_s")
-    cookie_manager.delete("jira_email", key="del_e")
-    cookie_manager.delete("jira_token", key="del_t")
+    # Trava de segurança: só tenta apagar o cookie se ele realmente existir!
+    if isinstance(cookies, dict):
+        if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
+        if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
+        if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
+    
+    # Limpa a memória da sessão do Python
     for key in list(st.session_state.keys()): del st.session_state[key]
+    
     time.sleep(0.5)
     st.rerun()
 
