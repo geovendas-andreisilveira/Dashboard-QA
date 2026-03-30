@@ -220,7 +220,7 @@ with st.sidebar:
                 if(permission === 'granted') {
                     new Notification('✅ Tudo pronto!', {
                         body: 'O Portal QA enviará notificações por aqui!',
-                        icon: 'https://cdn-icons-png.flaticon.com/512/2097/2097190.png'
+                        icon: 'https://cdn-icons-png.flaticon.com/512/1067/1067357.png'
                     });
                 }
             });
@@ -548,7 +548,7 @@ with tab_pessoal:
             if s == "PUBLISHED" and s_ant != "PUBLISHED":
                 if not j_p_neste_mes: 
                     st.toast(f"🚀 Tarefa {c} liberada para QA!", icon="🔔")
-                    icone_url = "https://cdn-icons-png.flaticon.com/512/2097/2097190.png"
+                    icone_url = "https://cdn-icons-png.flaticon.com/512/1067/1067357.png"
                     components.html(f"""
                         <script>
                         if (Notification.permission === 'granted') {{
