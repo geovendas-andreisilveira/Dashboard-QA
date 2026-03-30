@@ -10,7 +10,8 @@ import gspread
 import time
 import io
 import urllib.parse
-import plotly.express as px # 🔥 Nova biblioteca para gráficos animados!
+import plotly.express as px # Gráficos animados
+import streamlit.components.v1 as components # 🔥 Para as notificações do Windows/Mac
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
@@ -208,6 +209,30 @@ with st.sidebar:
          st.rerun()
 
     st.divider()
+
+    # 🔥 BOTÃO DE NOTIFICAÇÕES (NOVIDADE)
+    st.markdown("### 🔔 Notificações do Sistema")
+    st.caption("Ative para receber alertas no PC quando houver novas tarefas.")
+    components.html("""
+        <script>
+        function pedirPermissao() {
+            Notification.requestPermission().then(function(permission) {
+                if(permission === 'granted') {
+                    new Notification('✅ Tudo pronto!', {
+                        body: 'O Portal QA enviará notificações por aqui!',
+                        icon: 'https://cdn-icons-png.flaticon.com/512/2097/2097190.png'
+                    });
+                }
+            });
+        }
+        </script>
+        <button onclick="pedirPermissao()" style="background:#FF4B4B; color:white; border:none; padding:8px 12px; border-radius:5px; cursor:pointer; width:100%; font-weight:bold; font-family:sans-serif;">
+            Ativar Notificações no PC
+        </button>
+    """, height=50)
+
+    st.divider()
+
     if st.button("🚪 Sair do Sistema", use_container_width=True):
         if isinstance(cookies, dict):
             if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
@@ -257,7 +282,6 @@ if tab_equipe:
     with tab_equipe:
         st.header("🏢 Visão de Produtividade da Equipe")
         if not dados_todos_unfiltered.empty:
-            # 🔥 CORREÇÃO DE UX: Botões 100% alinhados na visão do gestor
             col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
             
             meses_equipe = sorted(dados_todos_unfiltered["Mes"].unique(), reverse=True)
@@ -271,11 +295,23 @@ if tab_equipe:
             def gerar_excel_relatorio_equipe():
                 output = io.BytesIO()
                 writer = pd.ExcelWriter(output, engine='xlsxwriter')
+                
+                # Aba 1: Dados completos
                 df_mes_equipe.to_excel(writer, sheet_name='Detalhes_Equipe', index=False)
+                
+                # Abas de Ranking QA
                 tabela_gestor_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
-                if not tabela_gestor_fv.empty: tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_FV', index=False)
+                if not tabela_gestor_fv.empty: tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_QA_FV', index=False)
+                
                 tabela_gestor_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
-                if not tabela_gestor_b2b.empty: tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_B2B', index=False)
+                if not tabela_gestor_b2b.empty: tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_QA_B2B', index=False)
+                
+                # 🔥 Aba nova no Excel: Ranking de Devs da Equipe
+                df_devs_equipe_excel = df_mes_equipe.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_devs_equipe_excel["Taxa de Acerto"] = (df_devs_equipe_excel["Sem_Correcao"] / df_devs_equipe_excel["Criados"].replace(0, 1)) * 100
+                df_devs_equipe_excel = df_devs_equipe_excel.sort_values(by=["Grupo", "Taxa de Acerto"], ascending=[True, False])
+                df_devs_equipe_excel.to_excel(writer, sheet_name='Ranking_Geral_Devs', index=False)
+
                 writer.close()
                 return output.getvalue()
 
@@ -297,12 +333,57 @@ if tab_equipe:
             if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
             else: st.caption("Sem dados para a equipe B2B neste mês.")
                 
+            st.divider()
+
+            # --- 🔥 RANKING GERAL DE DEVS ---
+            st.subheader("🚀 Ranking Geral de Desenvolvedores (Toda a Equipe)")
+            st.caption("Soma de todos os cenários validados por todos os QAs neste mês, agrupados por Desenvolvedor.")
+            
+            if not df_mes_equipe.empty:
+                df_devs_equipe = df_mes_equipe.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
+                df_devs_equipe["Taxa de Acerto"] = df_devs_equipe["Taxa de Acerto"].fillna(0).round(1)
+                df_devs_equipe = df_devs_equipe.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
+                df_devs_equipe = df_devs_equipe.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
+                st.dataframe(df_devs_equipe.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+
+            st.divider()
+
+            # --- 🔥 RAIO-X CIRÚRGICO POR DEV (ESTILO ACORDEÃO) ---
+            st.subheader("📋 Raio-X Cirúrgico das Tarefas por Dev")
+            st.caption("Clique no nome do Desenvolvedor para ver exatamente quais tarefas ele fez, quem foi o QA responsável e os detalhes de acerto.")
+            
+            if not df_mes_equipe.empty:
+                devs_unicos = sorted(df_mes_equipe["Desenvolvedor"].unique())
+                
+                for dev in devs_unicos:
+                    df_dev = df_mes_equipe[df_mes_equipe["Desenvolvedor"] == dev].copy()
+                    
+                    total_cr_dev = df_dev["Criados"].sum()
+                    total_sc_dev = df_dev["Sem_Correcao"].sum()
+                    total_cc_dev = df_dev["Com_Correcao"].sum()
+                    taxa_final_dev = (total_sc_dev / total_cr_dev * 100) if total_cr_dev > 0 else 0
+                    
+                    titulo_expander = f"👨‍💻 {dev} | Acerto Final: {taxa_final_dev:.1f}% | Total de Cenários: {total_cr_dev} (✅ {total_sc_dev} Aprovados / ⚠️ {total_cc_dev} Bugs)"
+                    
+                    with st.expander(titulo_expander, expanded=False):
+                        df_detalhe = df_dev[["Task", "Usuario", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
+                        df_detalhe["QA Responsável"] = df_detalhe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+                        df_detalhe["% da Task"] = (df_detalhe["Sem_Correcao"] / df_detalhe["Criados"].replace(0, 1)) * 100
+                        df_detalhe = df_detalhe[["Task", "QA Responsável", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao", "% da Task"]]
+                        df_detalhe = df_detalhe.rename(columns={"Sem_Correcao": "Aprovados", "Com_Correcao": "Com Bug"})
+                        
+                        st.dataframe(df_detalhe.style.format({"% da Task": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sem dados detalhados para exibir neste mês.")
+
+            st.write("")
             st.info("💡 Apenas usuários com permissão de Gestor podem visualizar esta aba.")
         else:
             st.warning("Nenhum dado foi registrado na nuvem ainda.")
 
 # ------------------------------------------
-# 👤 ABA 1: MEU PAINEL (C/ Gráficos Animados!)
+# 👤 ABA 1: MEU PAINEL
 # ------------------------------------------
 with tab_pessoal:
     dados_usuario_filling = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
@@ -351,7 +432,6 @@ with tab_pessoal:
         c2.metric("Aprovados Direto ✅", total_sc_u)
         c3.metric("Com Correção ⚠️", total_cc_u)
         
-        # 🔥 GRÁFICOS ANIMADOS (PLOTLY)
         st.write("")
         col_graf_b2b_u, col_graf_fv_u = st.columns(2)
         
@@ -401,7 +481,6 @@ with tab_pessoal:
             else:
                 st.caption("Sem dados suficientes para gerar seu ranking neste mês.")
 
-        # 🔥 BOTÃO FLUTUANTE DE E-MAIL (POPOVER - Muito mais limpo!)
         st.write("")
         hoje = datetime.now()
         ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
@@ -423,10 +502,8 @@ with tab_pessoal:
 
     st.divider()
 
-    # --- CARDS DE TAREFAS (PESSOAL) COM EXPANDER ---
+    # --- CARDS DE TAREFAS (PESSOAL) ---
     if not dados_usuario_filling.empty and mes_selecionado_usuario != mes_atual_str:
-        
-        # 🔥 HISTÓRICO ESCONDIDO NUM EXPANDER (Deixa a tela limpa)
         with st.expander(f"🗄️ Clique aqui para abrir o Histórico de {mes_selecionado_usuario}", expanded=False):
             st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
             t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
@@ -466,9 +543,22 @@ with tab_pessoal:
             l_d_atual = d_salvos_mes_atual[d_salvos_mes_atual["Task"] == c] if not d_salvos_mes_atual.empty else pd.DataFrame()
             j_p_neste_mes = not l_d_atual.empty
 
+            # 🔥 O DISPARO DA NOTIFICAÇÃO NATIVA (WINDOWS/MAC) OCORRE AQUI!
             s_ant = st.session_state.status_anterior.get(c, "DESCONHECIDO")
             if s == "PUBLISHED" and s_ant != "PUBLISHED":
-                if not j_p_neste_mes: st.toast(f"🚀 Tarefa {c} liberada para QA!", icon="🔔")
+                if not j_p_neste_mes: 
+                    st.toast(f"🚀 Tarefa {c} liberada para QA!", icon="🔔")
+                    icone_url = "https://cdn-icons-png.flaticon.com/512/2097/2097190.png"
+                    components.html(f"""
+                        <script>
+                        if (Notification.permission === 'granted') {{
+                            new Notification('Portal QA - Nova Tarefa!', {{
+                                body: 'A tarefa {c} está pronta para ser testada.\\nResumo: {rs}',
+                                icon: '{icone_url}'
+                            }});
+                        }}
+                        </script>
+                    """, height=0, width=0)
             st.session_state.status_anterior[c] = s
 
             is_dn = s in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
@@ -515,8 +605,7 @@ with tab_pessoal:
                         if c_b2.button("❌ Cancelar", key=f"btn_cancel_{c}", use_container_width=True):
                             st.session_state[e_k] = False
                             st.rerun()
-        
-        # 🔥 ANIMAÇÃO DE SUCESSO (BALÕES)
+
         if t_exibidas == 0:
             if t_pesquisa_filling: 
                 st.warning("Nenhuma tarefa encontrada na sua pesquisa.")
