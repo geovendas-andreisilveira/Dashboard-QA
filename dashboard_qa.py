@@ -10,11 +10,22 @@ import gspread
 import time
 import io
 import urllib.parse
-import plotly.express as px # Gráficos animados
-import streamlit.components.v1 as components # 🔥 Para as notificações do Windows/Mac
+import plotly.express as px
+import streamlit.components.v1 as components
 
 # Configuração da Página
 st.set_page_config(page_title="Portal QA 🚀", layout="wide")
+
+# ==========================================
+# 🪄 TEMAS DE HOGWARTS (Cores)
+# ==========================================
+temas_hp = {
+    "🏰 Sem Casa (Padrão)": {"primaria": "#FF4B4B", "secundaria": "#f0f2f6", "grafico_ok": "#2e7b32", "grafico_erro": "#d4a017"},
+    "🦁 Grifinória": {"primaria": "#740001", "secundaria": "#D3A625", "grafico_ok": "#740001", "grafico_erro": "#D3A625"},
+    "🐍 Sonserina": {"primaria": "#1A472A", "secundaria": "#5D5D5D", "grafico_ok": "#1A472A", "grafico_erro": "#aaaaaa"},
+    "🦅 Corvinal": {"primaria": "#0E1A40", "secundaria": "#946B2D", "grafico_ok": "#0E1A40", "grafico_erro": "#946B2D"},
+    "🦡 Lufa-Lufa": {"primaria": "#EEB939", "secundaria": "#000000", "grafico_ok": "#EEB939", "grafico_erro": "#555555"}
+}
 
 # ==========================================
 # ☁️ CONEXÃO COM O GOOGLE SHEETS E JIRA
@@ -93,6 +104,13 @@ if not st.session_state.get('jira_logado', False):
 # ==========================================
 # ⏱️ TEMPO REAL E DADOS
 # ==========================================
+# CSS para tentar reduzir a "piscada preta" do autorefresh
+st.markdown("""
+    <style>
+    .stApp { transition: background-color 0.1s ease; }
+    </style>
+""", unsafe_allow_html=True)
+
 st_autorefresh(interval=60000, limit=None, key="jira_refresh")
 
 mes_atual_str = datetime.now().strftime("%Y-%m")
@@ -135,7 +153,6 @@ def categorizar_projeto(nome_projeto):
 def buscar_tarefas_jira_real(servidor, email, token):
     try:
         jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=1, timeout=15)
-        # Trava de Março!
         jql = f'assignee = currentUser() AND updated >= "2026-03-01" ORDER BY updated DESC'
         issues = jira.search_issues(jql, maxResults=100) 
         
@@ -180,39 +197,48 @@ if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
     st.stop()
 
 # ==========================================
-# 👤 AVATAR E NOME DINÂMICO
+# 🧙‍♂️ TEMA HP, AVATAR E NOME DINÂMICO
 # ==========================================
 avatares = ["🧙‍♂️", "👩‍🎤", "👨‍💻", "👩‍🔬", "🤖"]
 cookie_avatar = cookies.get("qa_avatar")
-
-if cookie_avatar in avatares:
-    avatar_index = avatares.index(cookie_avatar)
-else:
-    avatar_index = 0
-
+avatar_index = avatares.index(cookie_avatar) if cookie_avatar in avatares else 0
 avatar_exibicao = avatares[avatar_index]
 
-if "@" in usuario_atual:
-    nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize()
-else:
-    nome_exibicao = "Usuário"
+cookie_house = cookies.get("qa_house")
+casa_index = list(temas_hp.keys()).index(cookie_house) if cookie_house in temas_hp else 0
+
+nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize() if "@" in usuario_atual else "Usuário"
+
+# Aplicando o CSS do Tema Escolhido
+cor_primaria = temas_hp[list(temas_hp.keys())[casa_index]]["primaria"]
+st.markdown(f"""
+    <style>
+    div[data-testid="stMetricValue"] {{ color: {cor_primaria}; }}
+    .stButton>button {{ border-color: {cor_primaria}; color: {cor_primaria}; }}
+    .stButton>button:hover {{ background-color: {cor_primaria}; color: white; }}
+    </style>
+""", unsafe_allow_html=True)
 
 st.title(f"📊 Painel de Controle QA - {avatar_exibicao} {nome_exibicao}")
 
 with st.sidebar:
-    st.markdown("### Configurações de Perfil")
+    st.markdown("### 🪄 Personalização")
     
-    avatar_escolhido = st.radio("Escolha seu avatar informal:", avatares, index=avatar_index, horizontal=True)
+    avatar_escolhido = st.radio("Seu avatar:", avatares, index=avatar_index, horizontal=True)
     if avatar_escolhido != cookie_avatar:
          cookie_manager.set("qa_avatar", avatar_escolhido, max_age=30*24*60*60, key="set_a")
-         time.sleep(1) 
+         time.sleep(0.5) 
+         st.rerun()
+
+    casa_escolhida = st.selectbox("Chapéu Seletor (Tema):", list(temas_hp.keys()), index=casa_index)
+    if casa_escolhida != cookie_house:
+         cookie_manager.set("qa_house", casa_escolhida, max_age=30*24*60*60, key="set_h")
+         time.sleep(0.5)
          st.rerun()
 
     st.divider()
 
-    # 🔥 BOTÃO DE NOTIFICAÇÕES (NOVIDADE)
     st.markdown("### 🔔 Notificações do Sistema")
-    st.caption("Ative para receber alertas no PC quando houver novas tarefas.")
     components.html("""
         <script>
         function pedirPermissao() {
@@ -245,107 +271,138 @@ with st.sidebar:
 st.divider()
 
 # ==========================================
-# 🛡️ PERMISSÕES (QUEM É O GESTOR?)
+# 🛡️ PERMISSÕES E ABAS
 # ==========================================
 emails_gestores = ["alison", "andrei"]
 eh_gestor = any(gestor in usuario_atual.lower() for gestor in emails_gestores)
+eh_andrei = "andrei.silveira" in usuario_atual.lower() # 🔥 A chave da Sala Precisa
 
-abas = st.tabs(["👤 Meu Painel (Tarefas e Gráficos)", "👑 Visão da Equipe (Gestão)"]) if eh_gestor else st.tabs(["👤 Meu Painel (Tarefas e Gráficos)"])
+# Estrutura dinâmica de abas
+lista_abas = ["👤 Meu Painel (Tarefas e Gráficos)"]
+if eh_gestor: lista_abas.append("👑 Visão da Equipe (Gestão)")
+if eh_andrei: lista_abas.append("👨‍💻 Análise de Devs (Andrei)")
+
+abas = st.tabs(lista_abas)
 tab_pessoal = abas[0]
 tab_equipe = abas[1] if eh_gestor else None
+tab_devs = abas[2] if eh_andrei else None
 
 # ==========================================
-# 👑 ABA 2: VISÃO DA EQUIPE (Apenas Gestores)
+# 👑 ABA 2: VISÃO DA EQUIPE (O pedido do Alison)
 # ==========================================
 def gerar_tabela_chefe_estilizada(df_grupo):
     if df_grupo.empty: return pd.DataFrame()
     resumo_equipe = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
     resumo_equipe["QA Responsável"] = resumo_equipe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
-    resumo_equipe = resumo_equipe.rename(columns={"Criados": "Total Cenários Criados", "Sem_Correcao": "Aprovados (Sem Correção)", "Com_Correcao": "Aprovados (Com Correção)"})
-    resumo_equipe["% Sucesso Direto"] = (resumo_equipe["Aprovados (Sem Correção)"] / resumo_equipe["Total Cenários Criados"].replace(0, 1)) * 100
+    resumo_equipe = resumo_equipe.rename(columns={"Criados": "Total Cenários", "Sem_Correcao": "Aprovados", "Com_Correcao": "Com Erro"})
+    resumo_equipe["% Sucesso"] = (resumo_equipe["Aprovados"] / resumo_equipe["Total Cenários"].replace(0, 1)) * 100
     
-    total_criados = resumo_equipe["Total Cenários Criados"].sum()
-    total_sem = resumo_equipe["Aprovados (Sem Correção)"].sum()
-    total_com = resumo_equipe["Aprovados (Com Correção)"].sum()
+    total_criados = resumo_equipe["Total Cenários"].sum()
+    total_sem = resumo_equipe["Aprovados"].sum()
+    total_com = resumo_equipe["Com Erro"].sum()
     taxa_total = (total_sem / total_criados * 100) if total_criados > 0 else 0
     
     linha_total_equipe = pd.DataFrame({
-        "QA Responsável": ["TOTAL"], "Total Cenários Criados": [total_criados],
-        "Aprovados (Sem Correção)": [total_sem], "Aprovados (Com Correção)": [total_com], "% Sucesso Direto": [taxa_total]
+        "QA Responsável": ["TOTAL"], "Total Cenários": [total_criados],
+        "Aprovados": [total_sem], "Com Erro": [total_com], "% Sucesso": [taxa_total]
     })
     tabela_final = pd.concat([resumo_equipe, linha_total_equipe], ignore_index=True)
-    tabela_final = tabela_final[["QA Responsável", "Total Cenários Criados", "Aprovados (Sem Correção)", "Aprovados (Com Correção)", "% Sucesso Direto"]]
-    tabela_final["% Sucesso Direto"] = tabela_final["% Sucesso Direto"].fillna(0).round(1)
+    tabela_final = tabela_final[["QA Responsável", "Total Cenários", "Aprovados", "Com Erro", "% Sucesso"]]
+    tabela_final["% Sucesso"] = tabela_final["% Sucesso"].fillna(0).round(1)
     return tabela_final
 
 if tab_equipe:
     with tab_equipe:
-        st.header("🏢 Visão de Produtividade da Equipe")
+        st.header("🏢 Visão Geral da Equipe")
         if not dados_todos_unfiltered.empty:
             col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
             
-            # 🔥 CORREÇÃO: Força o mês atual a aparecer no dropdown da equipe
             meses_equipe = list(dados_todos_unfiltered["Mes"].unique())
-            if mes_atual_str not in meses_equipe:
-                meses_equipe.append(mes_atual_str)
+            if mes_atual_str not in meses_equipe: meses_equipe.append(mes_atual_str)
             meses_equipe = sorted(meses_equipe, reverse=True)
             
-            col_tit_g.subheader(f"📊 Resumo da Equipe")
+            col_tit_g.subheader(f"📊 Painel de Gestão QA")
 
-            col_filtro_g.write("**Mês de Referência:**")
-            mes_selecionado_equipe = col_filtro_g.selectbox("Selecione o Mês da Equipe:", meses_equipe, index=0, label_visibility="collapsed")
+            col_filtro_g.write("**Mês:**")
+            mes_selecionado_equipe = col_filtro_g.selectbox("Mês da Equipe:", meses_equipe, index=0, label_visibility="collapsed")
 
             df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado_equipe]
             
             def gerar_excel_relatorio_equipe():
                 output = io.BytesIO()
                 writer = pd.ExcelWriter(output, engine='xlsxwriter')
-                
-                # Aba 1: Dados completos
-                df_mes_equipe.to_excel(writer, sheet_name='Detalhes_Equipe', index=False)
-                
-                # Abas de Ranking QA
+                df_mes_equipe.to_excel(writer, sheet_name='Cenários da Equipe', index=False)
                 tabela_gestor_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
                 if not tabela_gestor_fv.empty: tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_QA_FV', index=False)
-                
                 tabela_gestor_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
                 if not tabela_gestor_b2b.empty: tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_QA_B2B', index=False)
-                
-                # 🔥 Aba nova no Excel: Ranking de Devs da Equipe
-                df_devs_equipe_excel = df_mes_equipe.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-                df_devs_equipe_excel["Taxa de Acerto"] = (df_devs_equipe_excel["Sem_Correcao"] / df_devs_equipe_excel["Criados"].replace(0, 1)) * 100
-                df_devs_equipe_excel = df_devs_equipe_excel.sort_values(by=["Grupo", "Taxa de Acerto"], ascending=[True, False])
-                df_devs_equipe_excel.to_excel(writer, sheet_name='Ranking_Geral_Devs', index=False)
-
                 writer.close()
                 return output.getvalue()
-
-            excel_data_equipe = gerar_excel_relatorio_equipe()
             
-            col_download_g.write("**Exportar Dados:**")
-            col_download_g.download_button(label="📥 Baixar Relatório da Equipe", data=excel_data_equipe, file_name=f"Relatorio_Equipe_QA_{mes_selecionado_equipe}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            col_download_g.write("**Relatório:**")
+            col_download_g.download_button(label="📥 Baixar Excel da Equipe", data=gerar_excel_relatorio_equipe(), file_name=f"Relatorio_Equipe_{mes_selecionado_equipe}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-            st.divider()
+            # 1. TOTAL DE CENÁRIOS GERAIS DA EQUIPE
+            total_criados_eq = df_mes_equipe["Criados"].sum()
+            total_aprovados_eq = df_mes_equipe["Sem_Correcao"].sum()
+            total_erros_eq = df_mes_equipe["Com_Correcao"].sum()
             
-            st.subheader("📱 FV - FVT - AN (Visão Geral do Time)")
-            tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
-            if not tabela_fv.empty: st.dataframe(tabela_fv.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
-            else: st.caption("Sem dados para a equipe FV neste mês.")
-                
+            c1, c2, c3 = st.columns(3)
+            with st.container(border=True):
+                c1.metric("Total de Cenários (Time)", int(total_criados_eq))
+                c2.metric("Aprovados Direto ✅", int(total_aprovados_eq))
+                c3.metric("Com Correção ⚠️", int(total_erros_eq))
+
             st.write("")
-            st.subheader("🏢 B2B - CRM (Visão Geral do Time)")
-            tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
-            if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso Direto": "{:.1f}%"}), hide_index=True, use_container_width=True)
-            else: st.caption("Sem dados para a equipe B2B neste mês.")
-                
+            
+            # 2. PLANILHA DA VISÃO GERAL (O Painel)
+            c_fv, c_b2b = st.columns(2)
+            with c_fv:
+                st.markdown("**📱 FV - FVT - AN (Produtividade)**")
+                tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
+                if not tabela_fv.empty: st.dataframe(tabela_fv.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
+                else: st.caption("Sem dados.")
+                    
+            with c_b2b:
+                st.markdown("**🏢 B2B - CRM (Produtividade)**")
+                tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
+                if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
+                else: st.caption("Sem dados.")
+            
             st.divider()
 
-            # --- 🔥 RANKING GERAL DE DEVS ---
-            st.subheader("🚀 Ranking Geral de Desenvolvedores (Toda a Equipe)")
-            st.caption("Soma de todos os cenários validados por todos os QAs neste mês, agrupados por Desenvolvedor.")
-            
+            # 3. OS CENÁRIOS DE FATO
+            st.subheader("📋 Cenários Testados (Detalhes das Tarefas)")
             if not df_mes_equipe.empty:
-                df_devs_equipe = df_mes_equipe.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_cenarios_fato = df_mes_equipe[["Task", "Usuario", "Grupo", "Label", "Desenvolvedor", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
+                df_cenarios_fato["QA Responsável"] = df_cenarios_fato["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+                df_cenarios_fato = df_cenarios_fato.drop(columns=["Usuario"])
+                df_cenarios_fato = df_cenarios_fato[["Task", "Grupo", "Label", "QA Responsável", "Desenvolvedor", "Criados", "Sem_Correcao", "Com_Correcao"]]
+                
+                st.dataframe(df_cenarios_fato, hide_index=True, use_container_width=True)
+            else:
+                st.info("Nenhuma tarefa salva neste mês.")
+        else:
+            st.warning("Nenhum dado foi registrado na nuvem ainda.")
+
+# ==========================================
+# 👨‍💻 ABA 3: SALA PRECISA (Apenas Andrei)
+# ==========================================
+if tab_devs:
+    with tab_devs:
+        st.header("👨‍💻 Análise Profunda de Devs")
+        st.caption("Esta aba é visível apenas para a engenharia de qualidade (Andrei).")
+        
+        if not dados_todos_unfiltered.empty:
+            meses_dev = list(dados_todos_unfiltered["Mes"].unique())
+            if mes_atual_str not in meses_dev: meses_dev.append(mes_atual_str)
+            mes_dev_selecionado = st.selectbox("Selecione o Mês para Análise:", sorted(meses_dev, reverse=True))
+            
+            df_mes_dev = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_dev_selecionado]
+            
+            st.subheader("🚀 Ranking Geral de Desenvolvedores")
+            if not df_mes_dev.empty:
+                df_devs_equipe = df_mes_dev.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
                 df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
                 df_devs_equipe["Taxa de Acerto"] = df_devs_equipe["Taxa de Acerto"].fillna(0).round(1)
                 df_devs_equipe = df_devs_equipe.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
@@ -354,22 +411,17 @@ if tab_equipe:
 
             st.divider()
 
-            # --- 🔥 RAIO-X CIRÚRGICO POR DEV (ESTILO ACORDEÃO) ---
-            st.subheader("📋 Raio-X Cirúrgico das Tarefas por Dev")
-            st.caption("Clique no nome do Desenvolvedor para ver exatamente quais tarefas ele fez, quem foi o QA responsável e os detalhes de acerto.")
-            
-            if not df_mes_equipe.empty:
-                devs_unicos = sorted(df_mes_equipe["Desenvolvedor"].unique())
-                
+            st.subheader("📋 Raio-X Cirúrgico (Quem testou o quê?)")
+            if not df_mes_dev.empty:
+                devs_unicos = sorted(df_mes_dev["Desenvolvedor"].unique())
                 for dev in devs_unicos:
-                    df_dev = df_mes_equipe[df_mes_equipe["Desenvolvedor"] == dev].copy()
-                    
+                    df_dev = df_mes_dev[df_mes_dev["Desenvolvedor"] == dev].copy()
                     total_cr_dev = df_dev["Criados"].sum()
                     total_sc_dev = df_dev["Sem_Correcao"].sum()
                     total_cc_dev = df_dev["Com_Correcao"].sum()
                     taxa_final_dev = (total_sc_dev / total_cr_dev * 100) if total_cr_dev > 0 else 0
                     
-                    titulo_expander = f"👨‍💻 {dev} | Acerto Final: {taxa_final_dev:.1f}% | Total de Cenários: {total_cr_dev} (✅ {total_sc_dev} Aprovados / ⚠️ {total_cc_dev} Bugs)"
+                    titulo_expander = f"👨‍💻 {dev} | Acerto: {taxa_final_dev:.1f}% | Cenários: {total_cr_dev} (✅ {total_sc_dev} / ⚠️ {total_cc_dev})"
                     
                     with st.expander(titulo_expander, expanded=False):
                         df_detalhe = df_dev[["Task", "Usuario", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
@@ -377,18 +429,10 @@ if tab_equipe:
                         df_detalhe["% da Task"] = (df_detalhe["Sem_Correcao"] / df_detalhe["Criados"].replace(0, 1)) * 100
                         df_detalhe = df_detalhe[["Task", "QA Responsável", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao", "% da Task"]]
                         df_detalhe = df_detalhe.rename(columns={"Sem_Correcao": "Aprovados", "Com_Correcao": "Com Bug"})
-                        
                         st.dataframe(df_detalhe.style.format({"% da Task": "{:.1f}%"}), hide_index=True, use_container_width=True)
-            else:
-                st.caption("Sem dados detalhados para exibir neste mês.")
-
-            st.write("")
-            st.info("💡 Apenas usuários com permissão de Gestor podem visualizar esta aba.")
-        else:
-            st.warning("Nenhum dado foi registrado na nuvem ainda.")
 
 # ------------------------------------------
-# 👤 ABA 1: MEU PAINEL
+# 👤 ABA 1: MEU PAINEL (Usuário Comum)
 # ------------------------------------------
 with tab_pessoal:
     dados_usuario_filling = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
@@ -398,7 +442,6 @@ with tab_pessoal:
             col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
             col_tit.subheader(f"🏆 Meu Resumo")
             
-            # 🔥 CORREÇÃO: Força o mês atual a aparecer no seu dropdown pessoal
             meses_disponiveis = list(dados_usuario_filling["Mes"].unique())
             if mes_atual_str not in meses_disponiveis:
                 meses_disponiveis.append(mes_atual_str)
@@ -424,7 +467,6 @@ with tab_pessoal:
                 return output.getvalue()
 
             excel_data_usuario = gerar_excel_relatorio_usuario()
-            
             col_download.write("**Relatório:**")
             col_download.download_button(label="📥 Baixar Meu Excel", data=excel_data_usuario, file_name=f"Relatorio_{nome_exibicao}_{mes_selecionado_usuario}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
@@ -451,17 +493,19 @@ with tab_pessoal:
             cc = df_filtrado["Com_Correcao"].sum()
             taxa = (sc / cr * 100) if cr > 0 else 0
             
+            c_ok = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_ok"]
+            c_erro = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_erro"]
+            
             df_plot = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
             fig = px.pie(df_plot, values='Quantidade', names='Status', hole=0.6,
-                         color='Status', color_discrete_map={"Aprovados ✅": "#2e7b32", "Com Correção ⚠️": "#d4a017"})
+                         color='Status', color_discrete_map={"Aprovados ✅": c_ok, "Com Correção ⚠️": c_erro})
             
             fig.update_layout(
                 title_text=f"<b>{titulo_base}</b><br><span style='font-size:14px; color:gray;'>{taxa:.1f}% de Acerto</span>",
                 title_x=0.5, margin=dict(t=60, b=20, l=20, r=20), showlegend=False,
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
             )
-            fig.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+value',
-                              marker=dict(line=dict(color='#1E1E1E', width=2)))
+            fig.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+value', marker=dict(line=dict(color='#1E1E1E', width=2)))
             return fig
 
         with col_graf_b2b_u:
@@ -477,20 +521,6 @@ with tab_pessoal:
                 else: st.caption("Sem dados de FV para você neste mês.")
 
         st.write("")
-
-        with st.container(border=True):
-            st.markdown("#### 👨‍💻 Meu Ranking de Qualidade (Por Área e Desenvolvedor)")
-            if not df_mes_usuario.empty:
-                df_devs_user = df_mes_usuario.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-                df_devs_user["Taxa de Acerto"] = (df_devs_user["Sem_Correcao"] / df_devs_user["Criados"].replace(0, 1)) * 100
-                df_devs_user["Taxa de Acerto"] = df_devs_user["Taxa de Acerto"].fillna(0).round(1)
-                df_devs_user = df_devs_user.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-                df_devs_user = df_devs_user.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-                st.dataframe(df_devs_user.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
-            else:
-                st.caption("Sem dados suficientes para gerar seu ranking neste mês.")
-
-        st.write("")
         hoje = datetime.now()
         ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
         dias_para_fim = ultimo_dia - hoje.day
@@ -504,8 +534,7 @@ with tab_pessoal:
                 assunto_url = urllib.parse.quote(assunto)
                 corpo_url = urllib.parse.quote(corpo)
                 mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
-                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: #FF4B4B; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail</a>', unsafe_allow_html=True)
-                st.caption("Dica: Baixe seu Excel acima e anexe no e-mail.")
+                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: {cor_primaria}; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail</a>', unsafe_allow_html=True)
     else:
         st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
 
@@ -552,7 +581,6 @@ with tab_pessoal:
             l_d_atual = d_salvos_mes_atual[d_salvos_mes_atual["Task"] == c] if not d_salvos_mes_atual.empty else pd.DataFrame()
             j_p_neste_mes = not l_d_atual.empty
 
-            # 🔥 O DISPARO DA NOTIFICAÇÃO NATIVA (WINDOWS/MAC) OCORRE AQUI!
             s_ant = st.session_state.status_anterior.get(c, "DESCONHECIDO")
             if s == "PUBLISHED" and s_ant != "PUBLISHED":
                 if not j_p_neste_mes: 
