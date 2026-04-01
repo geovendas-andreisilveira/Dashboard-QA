@@ -284,7 +284,12 @@ if tab_equipe:
         if not dados_todos_unfiltered.empty:
             col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
             
-            meses_equipe = sorted(dados_todos_unfiltered["Mes"].unique(), reverse=True)
+            # 🔥 CORREÇÃO: Força o mês atual a aparecer no dropdown da equipe
+            meses_equipe = list(dados_todos_unfiltered["Mes"].unique())
+            if mes_atual_str not in meses_equipe:
+                meses_equipe.append(mes_atual_str)
+            meses_equipe = sorted(meses_equipe, reverse=True)
+            
             col_tit_g.subheader(f"📊 Resumo da Equipe")
 
             col_filtro_g.write("**Mês de Referência:**")
@@ -393,7 +398,11 @@ with tab_pessoal:
             col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
             col_tit.subheader(f"🏆 Meu Resumo")
             
-            meses_disponiveis = sorted(dados_usuario_filling["Mes"].unique(), reverse=True)
+            # 🔥 CORREÇÃO: Força o mês atual a aparecer no seu dropdown pessoal
+            meses_disponiveis = list(dados_usuario_filling["Mes"].unique())
+            if mes_atual_str not in meses_disponiveis:
+                meses_disponiveis.append(mes_atual_str)
+            meses_disponiveis = sorted(meses_disponiveis, reverse=True)
             
             col_filtro.write("**Mês:**")
             mes_selecionado_usuario = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
