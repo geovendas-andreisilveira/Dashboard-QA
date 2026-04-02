@@ -104,7 +104,6 @@ if not st.session_state.get('jira_logado', False):
 # ==========================================
 # ⏱️ TEMPO REAL E DADOS
 # ==========================================
-# CSS para tentar reduzir a "piscada preta" do autorefresh
 st.markdown("""
     <style>
     .stApp { transition: background-color 0.1s ease; }
@@ -183,7 +182,6 @@ def buscar_tarefas_jira_real(servidor, email, token):
 
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
     dados_todos_unfiltered = carregar_todos_dados()
-    dados_completos_usuario = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
 if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
@@ -209,7 +207,6 @@ casa_index = list(temas_hp.keys()).index(cookie_house) if cookie_house in temas_
 
 nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize() if "@" in usuario_atual else "Usuário"
 
-# Aplicando o CSS do Tema Escolhido
 cor_primaria = temas_hp[list(temas_hp.keys())[casa_index]]["primaria"]
 st.markdown(f"""
     <style>
@@ -271,25 +268,21 @@ with st.sidebar:
 st.divider()
 
 # ==========================================
-# 🛡️ PERMISSÕES E ABAS
+# 🛡️ PERMISSÕES E ABAS (Nova Lógica)
 # ==========================================
-emails_gestores = ["alison", "andrei"]
-eh_gestor = any(gestor in usuario_atual.lower() for gestor in emails_gestores)
-eh_andrei = "andrei.silveira" in usuario_atual.lower() # 🔥 A chave da Sala Precisa
+eh_andrei = "andrei.silveira" in usuario_atual.lower()
 
-# Estrutura dinâmica de abas
-lista_abas = ["👤 Meu Painel (Tarefas e Gráficos)"]
-if eh_gestor: lista_abas.append("👑 Visão da Equipe (Gestão)")
-if eh_andrei: lista_abas.append("👨‍💻 Análise de Devs (Andrei)")
+# O Alison queria tudo numa aba só. Mas para o Andrei, criamos a aba de Devs.
+if eh_andrei:
+    abas = st.tabs(["📊 Painel Geral (Visão Unificada)", "👨‍💻 Análise de Devs (Andrei)"])
+    tab_geral = abas[0]
+    tab_devs = abas[1]
+else:
+    abas = st.tabs(["📊 Painel Geral (Visão Unificada)"])
+    tab_geral = abas[0]
+    tab_devs = None
 
-abas = st.tabs(lista_abas)
-tab_pessoal = abas[0]
-tab_equipe = abas[1] if eh_gestor else None
-tab_devs = abas[2] if eh_andrei else None
-
-# ==========================================
-# 👑 ABA 2: VISÃO DA EQUIPE (O pedido do Alison)
-# ==========================================
+# Função auxiliar da Tabela
 def gerar_tabela_chefe_estilizada(df_grupo):
     if df_grupo.empty: return pd.DataFrame()
     resumo_equipe = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
@@ -311,242 +304,157 @@ def gerar_tabela_chefe_estilizada(df_grupo):
     tabela_final["% Sucesso"] = tabela_final["% Sucesso"].fillna(0).round(1)
     return tabela_final
 
-if tab_equipe:
-    with tab_equipe:
-        st.header("🏢 Visão Geral da Equipe")
-        if not dados_todos_unfiltered.empty:
-            col_tit_g, col_filtro_g, col_download_g = st.columns([0.4, 0.3, 0.3])
-            
-            meses_equipe = list(dados_todos_unfiltered["Mes"].unique())
-            if mes_atual_str not in meses_equipe: meses_equipe.append(mes_atual_str)
-            meses_equipe = sorted(meses_equipe, reverse=True)
-            
-            col_tit_g.subheader(f"📊 Painel de Gestão QA")
+def criar_grafico_donut_animado(df_filtrado, titulo_base):
+    if df_filtrado.empty: return None 
+    cr = df_filtrado["Criados"].sum()
+    sc = df_filtrado["Sem_Correcao"].sum()
+    cc = df_filtrado["Com_Correcao"].sum()
+    taxa = (sc / cr * 100) if cr > 0 else 0
+    
+    c_ok = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_ok"]
+    c_erro = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_erro"]
+    
+    df_plot = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
+    fig = px.pie(df_plot, values='Quantidade', names='Status', hole=0.6,
+                 color='Status', color_discrete_map={"Aprovados ✅": c_ok, "Com Correção ⚠️": c_erro})
+    
+    fig.update_layout(
+        title_text=f"<b>{titulo_base}</b><br><span style='font-size:14px; color:gray;'>{taxa:.1f}% de Acerto</span>",
+        title_x=0.5, margin=dict(t=30, b=20, l=20, r=20), showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=250
+    )
+    fig.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+value', marker=dict(line=dict(color='#1E1E1E', width=2)))
+    return fig
 
-            col_filtro_g.write("**Mês:**")
-            mes_selecionado_equipe = col_filtro_g.selectbox("Mês da Equipe:", meses_equipe, index=0, label_visibility="collapsed")
+# ==========================================
+# 📊 ABA 1: PAINEL GERAL (Tudo Numa Tela Só)
+# ==========================================
+with tab_geral:
+    # --- FILTRO MESTRE E EXCEL ---
+    with st.container(border=True):
+        col_filtro, col_excel_meu, col_excel_equipe = st.columns([0.4, 0.3, 0.3])
+        
+        meses_disponiveis = list(dados_todos_unfiltered["Mes"].unique()) if not dados_todos_unfiltered.empty else []
+        if mes_atual_str not in meses_disponiveis:
+            meses_disponiveis.append(mes_atual_str)
+        meses_disponiveis = sorted(meses_disponiveis, reverse=True)
+        
+        col_filtro.write("**Mês de Referência:**")
+        mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
 
-            df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado_equipe]
-            
-            def gerar_excel_relatorio_equipe():
-                output = io.BytesIO()
-                writer = pd.ExcelWriter(output, engine='xlsxwriter')
+        # Filtrando os dados baseados no mês mestre
+        df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado]
+        df_mes_usuario = df_mes_equipe[df_mes_equipe["Usuario"] == usuario_atual]
+        
+        # GERADOR DE EXCEL - INDIVIDUAL
+        def gerar_excel_meu():
+            output = io.BytesIO()
+            writer = pd.ExcelWriter(output, engine='xlsxwriter')
+            if not df_mes_usuario.empty:
+                df_mes_usuario.to_excel(writer, sheet_name='Cenários Detalhados', index=False)
+            else:
+                pd.DataFrame({"Aviso": ["Sem dados salvos neste mês."]}).to_excel(writer, sheet_name='Aviso', index=False)
+            writer.close() 
+            return output.getvalue()
+
+        # GERADOR DE EXCEL - EQUIPE
+        def gerar_excel_equipe():
+            output = io.BytesIO()
+            writer = pd.ExcelWriter(output, engine='xlsxwriter')
+            if not df_mes_equipe.empty:
                 df_mes_equipe.to_excel(writer, sheet_name='Cenários da Equipe', index=False)
                 tabela_gestor_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
                 if not tabela_gestor_fv.empty: tabela_gestor_fv.to_excel(writer, sheet_name='Ranking_QA_FV', index=False)
                 tabela_gestor_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
                 if not tabela_gestor_b2b.empty: tabela_gestor_b2b.to_excel(writer, sheet_name='Ranking_QA_B2B', index=False)
-                writer.close()
-                return output.getvalue()
-            
-            col_download_g.write("**Relatório:**")
-            col_download_g.download_button(label="📥 Baixar Excel da Equipe", data=gerar_excel_relatorio_equipe(), file_name=f"Relatorio_Equipe_{mes_selecionado_equipe}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-            # 1. TOTAL DE CENÁRIOS GERAIS DA EQUIPE
-            total_criados_eq = df_mes_equipe["Criados"].sum()
-            total_aprovados_eq = df_mes_equipe["Sem_Correcao"].sum()
-            total_erros_eq = df_mes_equipe["Com_Correcao"].sum()
-            
-            c1, c2, c3 = st.columns(3)
-            with st.container(border=True):
-                c1.metric("Total de Cenários (Time)", int(total_criados_eq))
-                c2.metric("Aprovados Direto ✅", int(total_aprovados_eq))
-                c3.metric("Com Correção ⚠️", int(total_erros_eq))
-
-            st.write("")
-            
-            # 2. PLANILHA DA VISÃO GERAL (O Painel)
-            c_fv, c_b2b = st.columns(2)
-            with c_fv:
-                st.markdown("**📱 FV - FVT - AN (Produtividade)**")
-                tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
-                if not tabela_fv.empty: st.dataframe(tabela_fv.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
-                else: st.caption("Sem dados.")
-                    
-            with c_b2b:
-                st.markdown("**🏢 B2B - CRM (Produtividade)**")
-                tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
-                if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
-                else: st.caption("Sem dados.")
-            
-            st.divider()
-
-            # 3. OS CENÁRIOS DE FATO
-            st.subheader("📋 Cenários Testados (Detalhes das Tarefas)")
-            if not df_mes_equipe.empty:
-                df_cenarios_fato = df_mes_equipe[["Task", "Usuario", "Grupo", "Label", "Desenvolvedor", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
-                df_cenarios_fato["QA Responsável"] = df_cenarios_fato["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
-                df_cenarios_fato = df_cenarios_fato.drop(columns=["Usuario"])
-                df_cenarios_fato = df_cenarios_fato[["Task", "Grupo", "Label", "QA Responsável", "Desenvolvedor", "Criados", "Sem_Correcao", "Com_Correcao"]]
-                
-                st.dataframe(df_cenarios_fato, hide_index=True, use_container_width=True)
             else:
-                st.info("Nenhuma tarefa salva neste mês.")
-        else:
-            st.warning("Nenhum dado foi registrado na nuvem ainda.")
+                pd.DataFrame({"Aviso": ["Sem dados salvos neste mês."]}).to_excel(writer, sheet_name='Aviso', index=False)
+            writer.close()
+            return output.getvalue()
 
-# ==========================================
-# 👨‍💻 ABA 3: SALA PRECISA (Apenas Andrei)
-# ==========================================
-if tab_devs:
-    with tab_devs:
-        st.header("👨‍💻 Análise Profunda de Devs")
-        st.caption("Esta aba é visível apenas para a engenharia de qualidade (Andrei).")
-        
-        if not dados_todos_unfiltered.empty:
-            meses_dev = list(dados_todos_unfiltered["Mes"].unique())
-            if mes_atual_str not in meses_dev: meses_dev.append(mes_atual_str)
-            mes_dev_selecionado = st.selectbox("Selecione o Mês para Análise:", sorted(meses_dev, reverse=True))
-            
-            df_mes_dev = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_dev_selecionado]
-            
-            st.subheader("🚀 Ranking Geral de Desenvolvedores")
-            if not df_mes_dev.empty:
-                df_devs_equipe = df_mes_dev.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-                df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
-                df_devs_equipe["Taxa de Acerto"] = df_devs_equipe["Taxa de Acerto"].fillna(0).round(1)
-                df_devs_equipe = df_devs_equipe.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
-                df_devs_equipe = df_devs_equipe.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
-                st.dataframe(df_devs_equipe.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        col_excel_meu.write("**Relatório Individual:**")
+        col_excel_meu.download_button(label="📥 Baixar Meu Excel", data=gerar_excel_meu(), file_name=f"Meu_Relatorio_{mes_selecionado}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-            st.divider()
+        col_excel_equipe.write("**Relatório da Equipe:**")
+        col_excel_equipe.download_button(label="📥 Baixar Excel da Equipe", data=gerar_excel_equipe(), file_name=f"Relatorio_Equipe_{mes_selecionado}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-            st.subheader("📋 Raio-X Cirúrgico (Quem testou o quê?)")
-            if not df_mes_dev.empty:
-                devs_unicos = sorted(df_mes_dev["Desenvolvedor"].unique())
-                for dev in devs_unicos:
-                    df_dev = df_mes_dev[df_mes_dev["Desenvolvedor"] == dev].copy()
-                    total_cr_dev = df_dev["Criados"].sum()
-                    total_sc_dev = df_dev["Sem_Correcao"].sum()
-                    total_cc_dev = df_dev["Com_Correcao"].sum()
-                    taxa_final_dev = (total_sc_dev / total_cr_dev * 100) if total_cr_dev > 0 else 0
-                    
-                    titulo_expander = f"👨‍💻 {dev} | Acerto: {taxa_final_dev:.1f}% | Cenários: {total_cr_dev} (✅ {total_sc_dev} / ⚠️ {total_cc_dev})"
-                    
-                    with st.expander(titulo_expander, expanded=False):
-                        df_detalhe = df_dev[["Task", "Usuario", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
-                        df_detalhe["QA Responsável"] = df_detalhe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
-                        df_detalhe["% da Task"] = (df_detalhe["Sem_Correcao"] / df_detalhe["Criados"].replace(0, 1)) * 100
-                        df_detalhe = df_detalhe[["Task", "QA Responsável", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao", "% da Task"]]
-                        df_detalhe = df_detalhe.rename(columns={"Sem_Correcao": "Aprovados", "Com_Correcao": "Com Bug"})
-                        st.dataframe(df_detalhe.style.format({"% da Task": "{:.1f}%"}), hide_index=True, use_container_width=True)
-
-# ------------------------------------------
-# 👤 ABA 1: MEU PAINEL (Usuário Comum)
-# ------------------------------------------
-with tab_pessoal:
-    dados_usuario_filling = dados_todos_unfiltered[dados_todos_unfiltered["Usuario"] == usuario_atual] if not dados_todos_unfiltered.empty else pd.DataFrame()
-
-    if not dados_usuario_filling.empty:
-        with st.container(border=True):
-            col_tit, col_filtro, col_download = st.columns([0.4, 0.3, 0.3])
-            col_tit.subheader(f"🏆 Meu Resumo")
-            
-            meses_disponiveis = list(dados_usuario_filling["Mes"].unique())
-            if mes_atual_str not in meses_disponiveis:
-                meses_disponiveis.append(mes_atual_str)
-            meses_disponiveis = sorted(meses_disponiveis, reverse=True)
-            
-            col_filtro.write("**Mês:**")
-            mes_selecionado_usuario = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
-
-            df_mes_usuario = dados_usuario_filling[dados_usuario_filling["Mes"] == mes_selecionado_usuario]
-            
-            df_devs_excel_user = df_mes_usuario.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-            df_devs_excel_user["Taxa de Acerto"] = (df_devs_excel_user["Sem_Correcao"] / df_devs_excel_user["Criados"].replace(0, 1)) * 100
-            
-            def gerar_excel_relatorio_usuario():
-                output = io.BytesIO()
-                writer = pd.ExcelWriter(output, engine='xlsxwriter')
-                df_mes_usuario.to_excel(writer, sheet_name='Cenários Detalhados', index=False)
-                df_devs_excel_user.to_excel(writer, sheet_name='Ranking Devs', index=False)
-                df_resumo_area_user = df_mes_usuario.groupby("Grupo")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
-                df_resumo_area_user["Taxa de Acerto"] = (df_resumo_area_user["Sem_Correcao"] / df_resumo_area_user["Criados"].replace(0, 1)) * 100
-                df_resumo_area_user.to_excel(writer, sheet_name='Resumo Área', index=False)
-                writer.close() 
-                return output.getvalue()
-
-            excel_data_usuario = gerar_excel_relatorio_usuario()
-            col_download.write("**Relatório:**")
-            col_download.download_button(label="📥 Baixar Meu Excel", data=excel_data_usuario, file_name=f"Relatorio_{nome_exibicao}_{mes_selecionado_usuario}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-        st.write("") 
-        df_b2b_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "B2B_CRM"]
-        df_fv_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "FV_FVT_AN"]
-
-        c1, c2, c3 = st.columns(3)
-        total_cr_u = int(df_mes_usuario["Criados"].sum())
-        total_sc_u = int(df_mes_usuario["Sem_Correcao"].sum())
-        total_cc_u = int(df_mes_usuario["Com_Correcao"].sum())
-        
-        c1.metric("Total de Cenários (Geral)", total_cr_u)
-        c2.metric("Aprovados Direto ✅", total_sc_u)
-        c3.metric("Com Correção ⚠️", total_cc_u)
-        
-        st.write("")
-        col_graf_b2b_u, col_graf_fv_u = st.columns(2)
-        
-        def criar_grafico_donut_animado(df_filtrado, titulo_base):
-            if df_filtrado.empty: return None 
-            cr = df_filtrado["Criados"].sum()
-            sc = df_filtrado["Sem_Correcao"].sum()
-            cc = df_filtrado["Com_Correcao"].sum()
-            taxa = (sc / cr * 100) if cr > 0 else 0
-            
-            c_ok = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_ok"]
-            c_erro = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_erro"]
-            
-            df_plot = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
-            fig = px.pie(df_plot, values='Quantidade', names='Status', hole=0.6,
-                         color='Status', color_discrete_map={"Aprovados ✅": c_ok, "Com Correção ⚠️": c_erro})
-            
-            fig.update_layout(
-                title_text=f"<b>{titulo_base}</b><br><span style='font-size:14px; color:gray;'>{taxa:.1f}% de Acerto</span>",
-                title_x=0.5, margin=dict(t=60, b=20, l=20, r=20), showlegend=False,
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            fig.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+value', marker=dict(line=dict(color='#1E1E1E', width=2)))
-            return fig
-
-        with col_graf_b2b_u:
-            with st.container(border=True):
-                g_b2b_u = criar_grafico_donut_animado(df_b2b_usuario, "🏢 Desempenho B2B")
-                if g_b2b_u is not None: st.plotly_chart(g_b2b_u, use_container_width=True)
-                else: st.caption("Sem dados de B2B para você neste mês.")
-
-        with col_graf_fv_u:
-            with st.container(border=True):
-                g_fv_u = criar_grafico_donut_animado(df_fv_usuario, "📱 Desempenho FV")
-                if g_fv_u is not None: st.plotly_chart(g_fv_u, use_container_width=True)
-                else: st.caption("Sem dados de FV para você neste mês.")
-
-        st.write("")
-        hoje = datetime.now()
-        ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
-        dias_para_fim = ultimo_dia - hoje.day
-        
-        if dias_para_fim <= 5 and mes_selecionado_usuario == mes_atual_str:
-            with st.popover("🚨 Fechar Mês e Enviar Relatório ao Gestor"):
-                st.markdown(f"Faltam **{dias_para_fim} dias** para fechar {mes_selecionado_usuario}.")
-                t_g = (total_sc_u / total_cr_u * 100) if total_cr_u > 0 else 0
-                assunto = f"Relatório QA - {nome_exibicao} ({mes_selecionado_usuario})"
-                corpo = f"Olá Gestor, tudo bem?\n\nSegue o relatório dos meus testes de {mes_selecionado_usuario}.\n\n📊 Resumo:\nCriados: {total_cr_u}\nAprovados: {total_sc_u}\nErros: {total_cc_u}\nAcerto: {t_g:.1f}%\n\nO Excel completo está em anexo.\nAbraços,\n{nome_exibicao}"
-                assunto_url = urllib.parse.quote(assunto)
-                corpo_url = urllib.parse.quote(corpo)
-                mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
-                st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: {cor_primaria}; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail</a>', unsafe_allow_html=True)
-    else:
-        st.info("📊 Os gráficos de qualidade aparecerão aqui assim que você registrar a primeira tarefa.")
+    # --- 1. MÉTRICAS PESSOAIS NO TOPO ---
+    st.write("")
+    st.markdown(f"### 🏆 Meu Resumo ({mes_selecionado})")
+    
+    total_cr_u = int(df_mes_usuario["Criados"].sum()) if not df_mes_usuario.empty else 0
+    total_sc_u = int(df_mes_usuario["Sem_Correcao"].sum()) if not df_mes_usuario.empty else 0
+    total_cc_u = int(df_mes_usuario["Com_Correcao"].sum()) if not df_mes_usuario.empty else 0
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total de Cenários (Meus)", total_cr_u)
+    c2.metric("Aprovados Direto ✅", total_sc_u)
+    c3.metric("Com Correção ⚠️", total_cc_u)
 
     st.divider()
 
-    # --- CARDS DE TAREFAS (PESSOAL) ---
-    if not dados_usuario_filling.empty and mes_selecionado_usuario != mes_atual_str:
-        with st.expander(f"🗄️ Clique aqui para abrir o Histórico de {mes_selecionado_usuario}", expanded=False):
+    # --- 2. LAYOUT LADO A LADO (Planilha Gestão + Gráfico Pessoal) ---
+    st.markdown(f"### 🏢 Produtividade & Gráficos ({mes_selecionado})")
+    st.caption("Visão consolidada da equipe (esquerda) x Seu desempenho pessoal (direita)")
+
+    # B2B Section
+    col_b2b_tabela, col_b2b_grafico = st.columns([0.6, 0.4])
+    with col_b2b_tabela:
+        st.markdown("**📊 Equipe B2B (Visão Geral)**")
+        tabela_b2b = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "B2B_CRM"])
+        if not tabela_b2b.empty: st.dataframe(tabela_b2b.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        else: st.caption("Sem dados para a equipe B2B neste mês.")
+
+    with col_b2b_grafico:
+        with st.container(border=True):
+            df_b2b_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "B2B_CRM"]
+            g_b2b_u = criar_grafico_donut_animado(df_b2b_usuario, "Meu Desempenho B2B")
+            if g_b2b_u is not None: st.plotly_chart(g_b2b_u, use_container_width=True)
+            else: st.caption("Você não possui dados de B2B.")
+
+    st.write("")
+
+    # FV Section
+    col_fv_tabela, col_fv_grafico = st.columns([0.6, 0.4])
+    with col_fv_tabela:
+        st.markdown("**📱 Equipe FV (Visão Geral)**")
+        tabela_fv = gerar_tabela_chefe_estilizada(df_mes_equipe[df_mes_equipe["Grupo"] == "FV_FVT_AN"])
+        if not tabela_fv.empty: st.dataframe(tabela_fv.style.format({"% Sucesso": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        else: st.caption("Sem dados para a equipe FV neste mês.")
+
+    with col_fv_grafico:
+        with st.container(border=True):
+            df_fv_usuario = df_mes_usuario[df_mes_usuario["Grupo"] == "FV_FVT_AN"]
+            g_fv_u = criar_grafico_donut_animado(df_fv_usuario, "Meu Desempenho FV")
+            if g_fv_u is not None: st.plotly_chart(g_fv_u, use_container_width=True)
+            else: st.caption("Você não possui dados de FV.")
+
+    st.divider()
+
+    # --- 3. AÇÕES FINAIS (E-mail e Histórico) ---
+    hoje = datetime.now()
+    ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
+    dias_para_fim = ultimo_dia - hoje.day
+    
+    if dias_para_fim <= 5 and mes_selecionado == mes_atual_str:
+        with st.popover("🚨 Fechar Mês e Enviar Relatório ao Gestor"):
+            st.markdown(f"Faltam **{dias_para_fim} dias** para fechar {mes_selecionado}.")
+            t_g = (total_sc_u / total_cr_u * 100) if total_cr_u > 0 else 0
+            assunto = f"Relatório QA - {nome_exibicao} ({mes_selecionado})"
+            corpo = f"Olá Gestor, tudo bem?\n\nSegue o relatório dos meus testes de {mes_selecionado}.\n\n📊 Resumo:\nCriados: {total_cr_u}\nAprovados: {total_sc_u}\nErros: {total_cc_u}\nAcerto: {t_g:.1f}%\n\nO Excel completo está em anexo.\nAbraços,\n{nome_exibicao}"
+            assunto_url = urllib.parse.quote(assunto)
+            corpo_url = urllib.parse.quote(corpo)
+            mailto_link = f"mailto:?subject={assunto_url}&body={corpo_url}"
+            st.markdown(f'<a href="{mailto_link}" style="display: block; text-align: center; padding: 0.5em 1em; color: white; background-color: {cor_primaria}; border-radius: 0.3em; text-decoration: none; font-weight: bold;">📧 Abrir E-mail</a>', unsafe_allow_html=True)
+            st.caption("Dica: Baixe seu Excel acima e anexe no e-mail.")
+
+    # --- 4. CARDS DE TAREFAS (Sempre no final) ---
+    if mes_selecionado != mes_atual_str:
+        with st.expander(f"🗄️ Clique aqui para abrir o Histórico de {mes_selecionado}", expanded=False):
             st.caption("Você está visualizando o arquivo morto. Tarefas de meses passados não podem ser editadas por aqui.")
-            t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado_usuario}...", "")
+            t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico de {mes_selecionado}...", "")
             if df_mes_usuario.empty:
-                st.info(f"Nenhum dado foi salvo no mês de {mes_selecionado_usuario}.")
+                st.info(f"Nenhum dado foi salvo por você no mês de {mes_selecionado}.")
             else:
                 for idx, row in df_mes_usuario.iterrows():
                     ch, dv = row["Task"], row["Desenvolvedor"]
@@ -557,15 +465,13 @@ with tab_pessoal:
                         l_t = f"{st.session_state.jira_servidor}/browse/{ch}"
                         st.markdown(f"### ✅ [{ch}]({l_t})")
                         st.write(f"**Área:** {row['Label']} | 👨‍💻 **Dev:** `{dv}`")
-                        st.success(f"Registrado em {mes_selecionado_usuario} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
+                        st.success(f"Registrado em {mes_selecionado} | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}** | Com Corr.: **{row['Com_Correcao']}**")
     else:
         st.header(f"📝 Minhas Tarefas para Preencher ({mes_atual_str})")
         t_pesquisa_filling = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Felipe Bogo, Pagamento...)", "")
         t_exibidas = 0
         if 'status_anterior' not in st.session_state: st.session_state.status_anterior = {}
         
-        d_salvos_mes_atual = dados_usuario_filling[dados_usuario_filling["Mes"] == mes_atual_str] if not dados_usuario_filling.empty else pd.DataFrame()
-
         for t_j in tarefas_jira:
             c, s = t_j["chave"], t_j["status"]
             dv_r = t_j.get("desenvolvedor", "Não Informado")
@@ -578,9 +484,10 @@ with tab_pessoal:
             j_preenchido_geral = not l_g.empty
             if j_preenchido_geral and l_g.iloc[0]["Mes"] != mes_atual_str: continue 
 
-            l_d_atual = d_salvos_mes_atual[d_salvos_mes_atual["Task"] == c] if not d_salvos_mes_atual.empty else pd.DataFrame()
+            l_d_atual = df_mes_usuario[df_mes_usuario["Task"] == c] if not df_mes_usuario.empty else pd.DataFrame()
             j_p_neste_mes = not l_d_atual.empty
 
+            # 🔥 O DISPARO DA NOTIFICAÇÃO NATIVA
             s_ant = st.session_state.status_anterior.get(c, "DESCONHECIDO")
             if s == "PUBLISHED" and s_ant != "PUBLISHED":
                 if not j_p_neste_mes: 
@@ -649,3 +556,53 @@ with tab_pessoal:
             else: 
                 st.balloons() 
                 st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
+
+# ==========================================
+# 👨‍💻 ABA 2: SALA PRECISA (Apenas Andrei)
+# ==========================================
+if tab_devs:
+    with tab_devs:
+        st.header("👨‍💻 Análise Profunda de Devs")
+        st.caption("Esta aba é visível apenas para a engenharia de qualidade (Andrei).")
+        
+        if not dados_todos_unfiltered.empty:
+            meses_dev = list(dados_todos_unfiltered["Mes"].unique())
+            if mes_atual_str not in meses_dev: meses_dev.append(mes_atual_str)
+            mes_dev_selecionado = st.selectbox("Selecione o Mês para Análise:", sorted(meses_dev, reverse=True))
+            
+            df_mes_dev = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_dev_selecionado]
+            
+            st.subheader("🚀 Ranking Geral de Desenvolvedores")
+            if not df_mes_dev.empty:
+                df_devs_equipe = df_mes_dev.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
+                df_devs_equipe["Taxa de Acerto"] = df_devs_equipe["Taxa de Acerto"].fillna(0).round(1)
+                df_devs_equipe = df_devs_equipe.rename(columns={"Grupo": "Área", "Sem_Correcao": "Sem Corr.", "Com_Correcao": "Com Corr."})
+                df_devs_equipe = df_devs_equipe.sort_values(by=["Área", "Taxa de Acerto"], ascending=[True, False])
+                st.dataframe(df_devs_equipe.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+
+            st.divider()
+
+            st.subheader("📋 Raio-X Cirúrgico (Quem testou o quê?)")
+            if not df_mes_dev.empty:
+                devs_unicos = sorted(df_mes_dev["Desenvolvedor"].unique())
+                for dev in devs_unicos:
+                    df_dev = df_mes_dev[df_mes_dev["Desenvolvedor"] == dev].copy()
+                    total_cr_dev = df_dev["Criados"].sum()
+                    total_sc_dev = df_dev["Sem_Correcao"].sum()
+                    total_cc_dev = df_dev["Com_Correcao"].sum()
+                    taxa_final_dev = (total_sc_dev / total_cr_dev * 100) if total_cr_dev > 0 else 0
+                    
+                    titulo_expander = f"👨‍💻 {dev} | Acerto: {taxa_final_dev:.1f}% | Cenários: {total_cr_dev} (✅ {total_sc_dev} / ⚠️ {total_cc_dev})"
+                    
+                    with st.expander(titulo_expander, expanded=False):
+                        df_detalhe = df_dev[["Task", "Usuario", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
+                        df_detalhe["QA Responsável"] = df_detalhe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+                        df_detalhe["% da Task"] = (df_detalhe["Sem_Correcao"] / df_detalhe["Criados"].replace(0, 1)) * 100
+                        df_detalhe = df_detalhe[["Task", "QA Responsável", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao", "% da Task"]]
+                        df_detalhe = df_detalhe.rename(columns={"Sem_Correcao": "Aprovados", "Com_Correcao": "Com Bug"})
+                        st.dataframe(df_detalhe.style.format({"% da Task": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sem dados detalhados para exibir neste mês.")
+        else:
+            st.warning("Nenhum dado registrado na nuvem.")
