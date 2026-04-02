@@ -29,19 +29,19 @@ temas_hp = {
     },
     "🦁 Grifinória": {
         "primaria": "#ff4d4d", "grafico_ok": "#ff4d4d", "grafico_erro": "#ffc107", # Vermelho claro e Dourado
-        "img_header": "grifinoria.png" # Troque por "grifinoria.gif" se tiver o arquivo
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/cabf325dc4dd88b31d84f229c0eac3a67520c73d/grifinoria.png" # Troque por "grifinoria.gif" se tiver o arquivo
     },
     "🐍 Sonserina": {
         "primaria": "#4caf50", "grafico_ok": "#4caf50", "grafico_erro": "#e0e0e0", # Verde neon e Prata
-        "img_header": "sonserina.png" # Troque por "sonserina.gif"
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/cabf325dc4dd88b31d84f229c0eac3a67520c73d/sonserina.png" # Troque por "sonserina.gif"
     },
     "🦅 Corvinal": {
         "primaria": "#64b5f6", "grafico_ok": "#64b5f6", "grafico_erro": "#ffb300", # Azul claro (legível) e Bronze
-        "img_header": "corvinal.png" # Troque por "corvinal.gif"
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/cabf325dc4dd88b31d84f229c0eac3a67520c73d/corvinal.png" # Troque por "corvinal.gif"
     },
     "🦡 Lufa-Lufa": {
         "primaria": "#ffd54f", "grafico_ok": "#ffd54f", "grafico_erro": "#9e9e9e", # Amarelo brilhante e Cinza
-        "img_header": "lufa lufa.png" # Troque por "lufalufa.gif"
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/cabf325dc4dd88b31d84f229c0eac3a67520c73d/lufalufa.png" # Troque por "lufalufa.gif"
     }
 }
 
