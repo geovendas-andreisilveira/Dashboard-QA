@@ -33,7 +33,7 @@ temas_hp = {
     },
     "🐍 Sonserina": {
         "primaria": "#4caf50", "grafico_ok": "#4caf50", "grafico_erro": "#e0e0e0", # Verde neon e Prata
-        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/cabf325dc4dd88b31d84f229c0eac3a67520c73d/sonserina.png" # Troque por "sonserina.gif"
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/sonserina.png?raw=true" # Troque por "sonserina.gif"
     },
     "🦅 Corvinal": {
         "primaria": "#64b5f6", "grafico_ok": "#64b5f6", "grafico_erro": "#ffb300", # Azul claro (legível) e Bronze
