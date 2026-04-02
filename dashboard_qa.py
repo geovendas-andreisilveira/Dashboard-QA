@@ -19,26 +19,29 @@ st.set_page_config(page_title="Portal QA - Gold Edition 🏆", layout="wide")
 # 🪄 TEMAS DE HOGWARTS E IMAGENS
 # ==========================================
 # Aqui você pode colar os links dos seus Gifs reais de Harry Potter!
+# ==========================================
+# 🪄 TEMAS DE HOGWARTS (Neon / Dark Mode Friendly)
+# ==========================================
 temas_hp = {
     "🏰 Sem Casa (Padrão)": {
-        "primaria": "#FF4B4B", "secundaria": "#f0f2f6", "grafico_ok": "#2e7b32", "grafico_erro": "#d4a017",
+        "primaria": "#FF4B4B", "grafico_ok": "#2e7b32", "grafico_erro": "#d4a017",
         "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" 
     },
     "🦁 Grifinória": {
-        "primaria": "#740001", "secundaria": "#D3A625", "grafico_ok": "#740001", "grafico_erro": "#D3A625",
-        "img_header": "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHIzMjZ2NzBxYXQ2bHVmZ2tqaHJ1bmk2cHRqcHBxeTczYTRwaHR2ZiZlcD12MV9naWZzX3NlYXJjaCZjdD1n/10gvWk3gV003vO/giphy.gif" # Exemplo de GIF
+        "primaria": "#ff4d4d", "grafico_ok": "#ff4d4d", "grafico_erro": "#ffc107", # Vermelho claro e Dourado
+        "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" # Troque por "grifinoria.gif" se tiver o arquivo
     },
     "🐍 Sonserina": {
-        "primaria": "#1A472A", "secundaria": "#5D5D5D", "grafico_ok": "#1A472A", "grafico_erro": "#aaaaaa",
-        "img_header": "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHIzMjZ2NzBxYXQ2bHVmZ2tqaHJ1bmk2cHRqcHBxeTczYTRwaHR2ZiZlcD12MV9naWZzX3NlYXJjaCZjdD1n/TIGP3k4gNAqvza2KJK/giphy.gif" 
+        "primaria": "#4caf50", "grafico_ok": "#4caf50", "grafico_erro": "#e0e0e0", # Verde neon e Prata
+        "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" # Troque por "sonserina.gif"
     },
     "🦅 Corvinal": {
-        "primaria": "#0E1A40", "secundaria": "#946B2D", "grafico_ok": "#0E1A40", "grafico_erro": "#946B2D",
-        "img_header": "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHIzMjZ2NzBxYXQ2bHVmZ2tqaHJ1bmk2cHRqcHBxeTczYTRwaHR2ZiZlcD12MV9naWZzX3NlYXJjaCZjdD1n/3bZfO4GttR1HlD6D3A/giphy.gif" 
+        "primaria": "#64b5f6", "grafico_ok": "#64b5f6", "grafico_erro": "#ffb300", # Azul claro (legível) e Bronze
+        "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" # Troque por "corvinal.gif"
     },
     "🦡 Lufa-Lufa": {
-        "primaria": "#EEB939", "secundaria": "#000000", "grafico_ok": "#EEB939", "grafico_erro": "#555555",
-        "img_header": "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHIzMjZ2NzBxYXQ2bHVmZ2tqaHJ1bmk2cHRqcHBxeTczYTRwaHR2ZiZlcD12MV9naWZzX3NlYXJjaCZjdD1n/4LwKrBfFQgBaw/giphy.gif" 
+        "primaria": "#ffd54f", "grafico_ok": "#ffd54f", "grafico_erro": "#9e9e9e", # Amarelo brilhante e Cinza
+        "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" # Troque por "lufalufa.gif"
     }
 }
 
@@ -215,19 +218,41 @@ casa_index = list(temas_hp.keys()).index(cookie_house) if cookie_house in temas_
 nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize() if "@" in usuario_atual else "Usuário"
 
 cor_primaria = temas_hp[list(temas_hp.keys())[casa_index]]["primaria"]
+
+# 🔥 CSS MÁGICO: Brilho (Glow) nos números e Animação de Flutuação (Leviosa)
 st.markdown(f"""
     <style>
-    div[data-testid="stMetricValue"] {{ color: {cor_primaria}; }}
+    /* Brilho mágico nos números das métricas */
+    div[data-testid="stMetricValue"] {{ 
+        color: {cor_primaria}; 
+        text-shadow: 0px 0px 10px {cor_primaria}80;
+    }}
+    
+    /* Cores dos botões */
     .stButton>button {{ border-color: {cor_primaria}; color: {cor_primaria}; }}
-    .stButton>button:hover {{ background-color: {cor_primaria}; color: white; }}
+    .stButton>button:hover {{ background-color: {cor_primaria}; color: white; box-shadow: 0px 0px 10px {cor_primaria}; }}
+    
+    /* Animação de flutuação para o logo/gif da casa */
+    @keyframes float {{
+        0% {{ transform: translateY(0px); }}
+        50% {{ transform: translateY(-10px); }}
+        100% {{ transform: translateY(0px); }}
+    }}
+    .magia-flutuante {{
+        animation: float 3s ease-in-out infinite;
+    }}
     </style>
 """, unsafe_allow_html=True)
 
-# 🔥 HEADER DE IMAGEM CONTIDO (Pequeno e arrumado)
-col_img, col_tit = st.columns([0.15, 0.85])
+# 🔥 HEADER HTML CUSTOMIZADO: Logo flutuante lado a lado com o título perfeito
 img_header_url = temas_hp[list(temas_hp.keys())[casa_index]]["img_header"]
-col_img.image(img_header_url, width=100) # Largura fixa para não estourar a tela
-col_tit.title(f"Painel de Controle QA - {avatar_exibicao} {nome_exibicao}")
+
+st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
+        <img src="{img_header_url}" width="80" class="magia-flutuante">
+        <h1 style="margin: 0; padding: 0;">Painel QA - {avatar_exibicao} {nome_exibicao}</h1>
+    </div>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 🪄 Personalização")
