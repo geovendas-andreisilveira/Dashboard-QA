@@ -13,58 +13,82 @@ import plotly.express as px
 import streamlit.components.v1 as components
 
 # ==========================================
-# 🗄️ IMPORTAÇÃO DO BANCO DE DADOS
+# 🗄️ NOVA IMPORTAÇÃO DO BANCO DE DADOS
 # ==========================================
 try:
     import psycopg2
 except ImportError:
     st.error("⚠️ Biblioteca 'psycopg2' não encontrada. Adicione 'psycopg2-binary' no seu requirements.txt")
 
+# Configuração da Página
 st.set_page_config(page_title="Portal QA - Gold Edition 🏆", layout="wide")
 
+# ==========================================
+# 🪄 TEMAS DE HOGWARTS E IMAGENS
+# ==========================================
 temas_hp = {
-    "🏰 Sem Casa (Padrão)": {"primaria": "#FF4B4B", "grafico_ok": "#2e7b32", "grafico_erro": "#d4a017", "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png"},
-    "🦁 Grifinória": {"primaria": "#ff4d4d", "grafico_ok": "#ff4d4d", "grafico_erro": "#ffc107", "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/grifinoria.png?raw=true"},
-    "🐍 Sonserina": {"primaria": "#4caf50", "grafico_ok": "#4caf50", "grafico_erro": "#e0e0e0", "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/sonserina.png?raw=true"},
-    "🦅 Corvinal": {"primaria": "#64b5f6", "grafico_ok": "#64b5f6", "grafico_erro": "#ffb300", "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/corvinal.png?raw=true"},
-    "🦡 Lufa-Lufa": {"primaria": "#ffd54f", "grafico_ok": "#ffd54f", "grafico_erro": "#9e9e9e", "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/lufalufa.png?raw=true"}
+    "🏰 Sem Casa (Padrão)": {
+        "primaria": "#FF4B4B", "grafico_ok": "#2e7b32", "grafico_erro": "#d4a017",
+        "img_header": "https://cdn-icons-png.flaticon.com/512/1067/1067357.png" 
+    },
+    "🦁 Grifinória": {
+        "primaria": "#ff4d4d", "grafico_ok": "#ff4d4d", "grafico_erro": "#ffc107",
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/grifinoria.png?raw=true"
+    },
+    "🐍 Sonserina": {
+        "primaria": "#4caf50", "grafico_ok": "#4caf50", "grafico_erro": "#e0e0e0",
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/sonserina.png?raw=true"
+    },
+    "🦅 Corvinal": {
+        "primaria": "#64b5f6", "grafico_ok": "#64b5f6", "grafico_erro": "#ffb300",
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/corvinal.png?raw=true"
+    },
+    "🦡 Lufa-Lufa": {
+        "primaria": "#ffd54f", "grafico_ok": "#ffd54f", "grafico_erro": "#9e9e9e",
+        "img_header": "https://github.com/geovendas-andreisilveira/Dashboard-QA/blob/main/lufalufa.png?raw=true"
+    }
 }
 
 # ==========================================
-# ☁️ CONEXÃO SHEETS E JIRA
+# ☁️ CONEXÃO COM O GOOGLE SHEETS E JIRA
 # ==========================================
 @st.cache_resource
 def conectar_google_sheets():
     creds_dict = json.loads(st.secrets["google_credentials_json"])
     gc = gspread.service_account_from_dict(creds_dict)
-    return gc.open("Base_Portal_QA").worksheet("Dados")
+    sh = gc.open("Base_Portal_QA")
+    return sh.worksheet("Dados")
 
 try:
     worksheet = conectar_google_sheets()
 except Exception as e:
-    st.error(f"Erro no Google Sheets: {e}")
+    st.error(f"Erro ao conectar no Google Sheets. Verifique o compartilhamento. Detalhe: {e}")
     st.stop()
 
 def validar_credenciais_jira(servidor, email, token):
     try:
-        JIRA(server=servidor, basic_auth=(email, token), max_retries=0, timeout=5).myself() 
+        jira = JIRA(server=servidor, basic_auth=(email, token), max_retries=0, timeout=5)
+        jira.myself() 
         return True
     except Exception:
         return False
 
 # ==========================================
-# 🗄️ FUNÇÃO DE VERIFICAÇÃO DE BANCO (Sem Cache para checar na hora H)
+# 🗄️ LÓGICA DE VERIFICAÇÃO DE BASES POSTGRESQL (Sem Cache para Tempo Real)
 # ==========================================
 def verificar_status_bases(bases_str):
-    if not bases_str or bases_str == "Não informada" or str(bases_str).strip() == "" or bases_str == "Nenhum":
+    if not bases_str or bases_str == "Não informada" or str(bases_str).strip() == "":
         return []
     
     bases = [b.strip() for b in bases_str.replace(';', ',').split(',') if b.strip()]
     resultados = []
+    
+    # Servidores capturados da sua imagem do DBeaver
     servidores = ["192.168.37.20", "192.168.37.22"]
     
-    user_db = st.secrets.get("db_user", "SEU_USER") 
-    pass_db = st.secrets.get("db_pass", "SUA_SENHA")
+    # IMPORTANTE: Puxe isso do st.secrets ou coloque chumbado (apenas usuário de LEITURA)
+    user_db = st.secrets.get("db_user", "SEU_USUARIO_POSTGRES") 
+    pass_db = st.secrets.get("db_pass", "SUA_SENHA_POSTGRES")
 
     for base in bases:
         encontrada_ativa = False
@@ -72,7 +96,8 @@ def verificar_status_bases(bases_str):
         
         for ip in servidores:
             try:
-                conn = psycopg2.connect(host=ip, port="5432", user=user_db, password=pass_db, dbname="postgres", connect_timeout=3)
+                # Timeout de 2s para não travar a tela do usuário
+                conn = psycopg2.connect(host=ip, port="5432", user=user_db, password=pass_db, dbname="postgres", connect_timeout=2)
                 conn.autocommit = True
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (base,))
@@ -82,8 +107,8 @@ def verificar_status_bases(bases_str):
                 
                 if existe:
                     encontrada_ativa = True
-                    break
-            except Exception:
+                    break 
+            except Exception as e:
                 erro_conexao = True
         
         if encontrada_ativa:
@@ -96,9 +121,60 @@ def verificar_status_bases(bases_str):
     return resultados
 
 # ==========================================
+# 🍪 LÓGICA DE LOGIN
+# ==========================================
+cookie_manager = stx.CookieManager()
+cookies = cookie_manager.get_all()
+
+if isinstance(cookies, dict):
+    cookie_email = cookies.get("jira_email")
+    cookie_token = cookies.get("jira_token")
+    cookie_servidor = cookies.get("jira_servidor")
+
+    if cookie_email and cookie_token and not st.session_state.get('jira_logado'):
+        st.session_state.jira_servidor = str(cookie_servidor).strip('"')
+        st.session_state.jira_email = str(cookie_email).strip('"')
+        st.session_state.jira_token = str(cookie_token).strip('"')
+        st.session_state.jira_logado = True
+        st.rerun()
+
+if not st.session_state.get('jira_logado', False):
+    st.title("🔐 Login - Portal QA")
+    st.write("Bem-vindo! Insira suas credenciais do Jira para acessar o painel.")
+    
+    with st.form("login_form"):
+        servidor_input = st.text_input("URL do Jira", value="https://geovendas.atlassian.net")
+        email_input = st.text_input("Seu E-mail do Jira")
+        token_input = st.text_input("Seu Token de API", type="password")
+        lembrar = st.checkbox("Lembrar de mim por 30 dias", value=True)
+        submit = st.form_submit_button("Entrar no Painel")
+        
+        if submit:
+            if email_input and token_input:
+                with st.spinner("Validando suas credenciais no Jira... Aguarde."):
+                    if validar_credenciais_jira(servidor_input, email_input, token_input):
+                        if lembrar:
+                            cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60, key="set_s")
+                            cookie_manager.set("jira_email", email_input, max_age=30*24*60*60, key="set_e")
+                            cookie_manager.set("jira_token", token_input, max_age=30*24*60*60, key="set_t")
+                            time.sleep(1) 
+                        
+                        st.session_state.jira_servidor = servidor_input
+                        st.session_state.jira_email = email_input
+                        st.session_state.jira_token = token_input
+                        st.session_state.jira_logado = True
+                        st.rerun()
+                    else:
+                        st.error("❌ Token ou E-mail incorretos! Gere um novo token e tente novamente.")
+            else:
+                st.warning("Preencha o e-mail e o token para continuar.")
+    st.stop()
+
+# ==========================================
 # ⏱️ TEMPO REAL E DADOS
 # ==========================================
 mes_atual_str = datetime.now().strftime("%Y-%m")
+usuario_atual = st.session_state.jira_email
 
 def carregar_todos_dados():
     records = worksheet.get_all_records()
@@ -106,7 +182,8 @@ def carregar_todos_dados():
         return pd.DataFrame(columns=["Task", "Criados", "Sem_Correcao", "Com_Correcao", "Mes", "Label", "Grupo", "Usuario", "Desenvolvedor"])
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip()
-    if "Desenvolvedor" not in df.columns: df["Desenvolvedor"] = "Não Informado"
+    if "Desenvolvedor" not in df.columns:
+        df["Desenvolvedor"] = "Não Informado"
     return df
 
 def salvar_task_no_sheets(task, criados, sem_c, com_c, mes, label, grupo, usuario, desenvolvedor):
@@ -150,16 +227,17 @@ def buscar_tarefas_jira_real(servidor, email, token):
             for field_name in dir(issue.fields):
                 if field_name.startswith("customfield_"):
                     val = getattr(issue.fields, field_name)
+                    # Busca labels e Devs
                     if val and hasattr(val, 'value'):
                         if any(x in str(val.value) for x in ["B2B", "CRM", "Força", "Analytics", "Têxtil"]):
                             area_encontrada = str(val.value)
                     if val and hasattr(val, 'displayName') and field_name not in ['assignee', 'creator', 'reporter']:
                         dev_encontrado = val.displayName
                     
-                    # 🔍 CAPTURA A BASE DIRETAMENTE DO CAMPO DO JIRA
+                    # 🔍 CAPTURA A BASE DIRETAMENTE DO JIRA AQUI
                     if val and isinstance(val, str) and len(str(val)) < 80:
                         val_str = str(val).lower()
-                        # Procura padrões de nomes de base que vocês usam (baseado na sua print)
+                        # Atualizei a lista de prefixos baseando nas suas imagens
                         if any(x in val_str for x in ["geo", "zcalian", "zelian", "zteste", "dalari", "manatex", "fbr"]):
                             base_dados_encontrada = str(val)
 
@@ -167,59 +245,38 @@ def buscar_tarefas_jira_real(servidor, email, token):
                 "chave": issue.key, "resumo": issue.fields.summary,
                 "status": status_atual, "label": area_encontrada, "grupo": categorizar_projeto(area_encontrada),
                 "desenvolvedor": dev_encontrado,
-                "base_dados": base_dados_encontrada 
+                "base_dados": base_dados_encontrada # A base lida do Jira
             })
         return tarefas
     except Exception as e:
         return f"ERRO_AUTH: {str(e)}"
 
-# ==========================================
-# 🍪 LOGIN E SESSÃO
-# ==========================================
-cookie_manager = stx.CookieManager()
-cookies = cookie_manager.get_all()
-
-if isinstance(cookies, dict):
-    cookie_email = cookies.get("jira_email")
-    cookie_token = cookies.get("jira_token")
-    cookie_servidor = cookies.get("jira_servidor")
-
-    if cookie_email and cookie_token and not st.session_state.get('jira_logado'):
-        st.session_state.jira_servidor = str(cookie_servidor).strip('"')
-        st.session_state.jira_email = str(cookie_email).strip('"')
-        st.session_state.jira_token = str(cookie_token).strip('"')
-        st.session_state.jira_logado = True
-        st.rerun()
-
-if not st.session_state.get('jira_logado', False):
-    st.title("🔐 Login - Portal QA")
-    with st.form("login_form"):
-        servidor_input = st.text_input("URL do Jira", value="https://geovendas.atlassian.net")
-        email_input = st.text_input("Seu E-mail do Jira")
-        token_input = st.text_input("Seu Token de API", type="password")
-        if st.form_submit_button("Entrar no Painel"):
-            if email_input and token_input and validar_credenciais_jira(servidor_input, email_input, token_input):
-                cookie_manager.set("jira_servidor", servidor_input, max_age=30*24*60*60)
-                cookie_manager.set("jira_email", email_input, max_age=30*24*60*60)
-                cookie_manager.set("jira_token", token_input, max_age=30*24*60*60)
-                st.session_state.update({"jira_servidor": servidor_input, "jira_email": email_input, "jira_token": token_input, "jira_logado": True})
-                st.rerun()
-            else:
-                st.error("Credenciais inválidas.")
-    st.stop()
-
-usuario_atual = st.session_state.jira_email
-
 with st.spinner("Sincronizando tarefas e gerando gráficos..."):
     dados_todos_unfiltered = carregar_todos_dados()
     tarefas_jira = buscar_tarefas_jira_real(st.session_state.jira_servidor, st.session_state.jira_email, st.session_state.jira_token)
 
+if isinstance(tarefas_jira, str) and tarefas_jira.startswith("ERRO_AUTH"):
+    if isinstance(cookies, dict):
+        if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="err_s")
+        if "jira_email" in cookies: cookie_manager.delete("jira_email", key="err_e")
+        if "jira_token" in cookies: cookie_manager.delete("jira_token", key="err_t")
+    st.session_state.clear()
+    time.sleep(1)
+    st.error(f"⚠️ Não foi possível conectar ao Jira. A sessão expirou ou o token é inválido.")
+    st.stop()
+
 # ==========================================
-# 🧙‍♂️ VISUAL E INTERFACE
+# 🧙‍♂️ TEMA HP E INTERFACE
 # ==========================================
 avatares = ["🧙‍♂️", "👩‍🎤", "👨‍💻", "👩‍🔬", "🤖"]
-avatar_index = avatares.index(cookies.get("qa_avatar")) if cookies.get("qa_avatar") in avatares else 0
-casa_index = list(temas_hp.keys()).index(cookies.get("qa_house")) if cookies.get("qa_house") in temas_hp else 0
+cookie_avatar = cookies.get("qa_avatar")
+avatar_index = avatares.index(cookie_avatar) if cookie_avatar in avatares else 0
+avatar_exibicao = avatares[avatar_index]
+
+cookie_house = cookies.get("qa_house")
+casa_index = list(temas_hp.keys()).index(cookie_house) if cookie_house in temas_hp else 0
+
+nome_exibicao = usuario_atual.split('@')[0].split('.')[0].capitalize() if "@" in usuario_atual else "Usuário"
 cor_primaria = temas_hp[list(temas_hp.keys())[casa_index]]["primaria"]
 
 st.markdown(f"""
@@ -227,103 +284,272 @@ st.markdown(f"""
     div[data-testid="stMetricValue"] {{ color: {cor_primaria}; text-shadow: 0px 0px 10px {cor_primaria}80; }}
     .stButton>button {{ border-color: {cor_primaria}; color: {cor_primaria}; }}
     .stButton>button:hover {{ background-color: {cor_primaria}; color: white; box-shadow: 0px 0px 10px {cor_primaria}; }}
+    @keyframes float {{ 0% {{ transform: translateY(0px); }} 50% {{ transform: translateY(-10px); }} 100% {{ transform: translateY(0px); }} }}
+    .magia-flutuante {{ animation: float 3s ease-in-out infinite; }}
     </style>
+""", unsafe_allow_html=True)
+
+img_header_url = temas_hp[list(temas_hp.keys())[casa_index]]["img_header"]
+st.markdown(f"""
     <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
-        <img src="{temas_hp[list(temas_hp.keys())[casa_index]]['img_header']}" width="80">
-        <h1 style="margin: 0;">Painel QA - {avatares[avatar_index]} {usuario_atual.split('@')[0].capitalize()}</h1>
+        <img src="{img_header_url}" width="80" class="magia-flutuante">
+        <h1 style="margin: 0; padding: 0;">Painel QA - {avatar_exibicao} {nome_exibicao}</h1>
     </div>
 """, unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 🪄 Personalização")
-    if st.radio("Seu avatar informal:", avatares, index=avatar_index, horizontal=True) != cookies.get("qa_avatar"):
-         cookie_manager.set("qa_avatar", st.session_state.get('qa_avatar'), max_age=30*24*60*60); st.rerun()
-    if st.selectbox("Chapéu Seletor (Tema HP):", list(temas_hp.keys()), index=casa_index) != cookies.get("qa_house"):
-         cookie_manager.set("qa_house", st.session_state.get('qa_house'), max_age=30*24*60*60); st.rerun()
+    avatar_escolhido = st.radio("Seu avatar informal:", avatares, index=avatar_index, horizontal=True)
+    if avatar_escolhido != cookie_avatar:
+         cookie_manager.set("qa_avatar", avatar_escolhido, max_age=30*24*60*60, key="set_a")
+         time.sleep(0.5) 
+         st.rerun()
+
+    casa_escolhida = st.selectbox("Chapéu Seletor (Tema HP):", list(temas_hp.keys()), index=casa_index)
+    if casa_escolhida != cookie_house:
+         cookie_manager.set("qa_house", casa_escolhida, max_age=30*24*60*60, key="set_h")
+         time.sleep(0.5)
+         st.rerun()
+
     st.divider()
     if st.button("🔄 Sincronizar Dados", use_container_width=True): st.rerun()
+
+    # NOTIFICAÇÕES (MANTIDAS INTACTAS)
+    st.markdown("### 🔔 Notificações do Sistema")
+    st.caption("Ative para receber alertas no PC quando houver novas tarefas.")
+    components.html("""
+        <script>
+        function pedirPermissao() {
+            Notification.requestPermission().then(function(permission) {
+                if(permission === 'granted') {
+                    new Notification('✅ Tudo pronto!', {
+                        body: 'O Portal QA enviará notificações por aqui!',
+                        icon: 'https://cdn-icons-png.flaticon.com/512/1067/1067357.png'
+                    });
+                }
+            });
+        }
+        </script>
+        <button onclick="pedirPermissao()" style="background:#FF4B4B; color:white; border:none; padding:8px 12px; border-radius:5px; cursor:pointer; width:100%; font-weight:bold; font-family:sans-serif;">
+            Ativar Notificações no PC
+        </button>
+    """, height=50)
+
+    st.divider()
+
+    if st.button("🚪 Sair do Sistema", use_container_width=True):
+        if isinstance(cookies, dict):
+            if "jira_servidor" in cookies: cookie_manager.delete("jira_servidor", key="del_s")
+            if "jira_email" in cookies: cookie_manager.delete("jira_email", key="del_e")
+            if "jira_token" in cookies: cookie_manager.delete("jira_token", key="del_t")
+        st.session_state.clear()
+        time.sleep(1.5) 
+        st.rerun()
 
 st.divider()
 
 # ==========================================
-# 📊 ABA 1: PAINEL GERAL (FILA DE TAREFAS)
+# 🛡️ PERMISSÕES E ABAS 
 # ==========================================
-tab_geral = st.tabs(["📊 Painel Geral (Visão Unificada)", "🕵️‍♂️ Sala Precisa (Análise de Devs)"])[0] if "andrei" in usuario_atual else st.tabs(["📊 Painel Geral"])[0]
+eh_andrei = "andrei.silveira" in usuario_atual.lower()
+if eh_andrei:
+    abas = st.tabs(["📊 Painel Geral (Visão Unificada)", "🕵️‍♂️ Sala Precisa (Análise de Devs)"])
+    tab_geral, tab_andrei = abas[0], abas[1]
+else:
+    abas = st.tabs(["📊 Painel Geral (Visão Unificada)"])
+    tab_geral, tab_andrei = abas[0], None
 
-with tab_geral:
-    st.header(f"📝 Minhas Tarefas do Mês ({mes_atual_str})")
-    df_mes_usuario = dados_todos_unfiltered[(dados_todos_unfiltered["Mes"] == mes_atual_str) & (dados_todos_unfiltered["Usuario"] == usuario_atual)] if not dados_todos_unfiltered.empty else pd.DataFrame()
-    t_exibidas = 0
+def gerar_tabela_chefe_estilizada(df_grupo):
+    if df_grupo.empty: return pd.DataFrame()
+    resumo_equipe = df_grupo.groupby("Usuario")[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+    resumo_equipe["QA Responsável"] = resumo_equipe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+    resumo_equipe = resumo_equipe.rename(columns={"Criados": "Total Cenários", "Sem_Correcao": "Aprovados", "Com_Correcao": "Com Erro"})
+    resumo_equipe["% Sucesso"] = (resumo_equipe["Aprovados"] / resumo_equipe["Total Cenários"].replace(0, 1)) * 100
     
-    for t_j in tarefas_jira:
-        c, s, dv_r, rs = t_j["chave"], t_j["status"], t_j.get("desenvolvedor", "Não Informado"), t_j['resumo']
-        b_dados_jira = t_j.get("base_dados", "Não informada") # Base puxada automaticamente do Jira
+    total_criados = resumo_equipe["Total Cenários"].sum()
+    total_sem = resumo_equipe["Aprovados"].sum()
+    total_com = resumo_equipe["Com Erro"].sum()
+    taxa_total = (total_sem / total_criados * 100) if total_criados > 0 else 0
+    
+    linha_total_equipe = pd.DataFrame({"QA Responsável": ["TOTAL DA ÁREA"], "Total Cenários": [total_criados], "Aprovados": [total_sem], "Com Erro": [total_com], "% Sucesso": [taxa_total]})
+    tabela_final = pd.concat([resumo_equipe, linha_total_equipe], ignore_index=True)
+    tabela_final = tabela_final[["QA Responsável", "Total Cenários", "Aprovados", "Com Erro", "% Sucesso"]]
+    tabela_final["% Sucesso"] = tabela_final["% Sucesso"].fillna(0).round(1)
+    return tabela_final
+
+def criar_grafico_donut_limpo(df_filtrado, titulo_base):
+    if df_filtrado.empty: return None 
+    cr, sc, cc = df_filtrado["Criados"].sum(), df_filtrado["Sem_Correcao"].sum(), df_filtrado["Com_Correcao"].sum()
+    taxa = (sc / cr * 100) if cr > 0 else 0
+    c_ok, c_erro = temas_hp[list(temas_hp.keys())[casa_index]]["grafico_ok"], temas_hp[list(temas_hp.keys())[casa_index]]["grafico_erro"]
+    
+    df_plot = pd.DataFrame({"Status": ["Aprovados ✅", "Com Correção ⚠️"], "Quantidade": [sc, cc]})
+    fig = px.pie(df_plot, values='Quantidade', names='Status', hole=0.65, color='Status', color_discrete_map={"Aprovados ✅": c_ok, "Com Correção ⚠️": c_erro})
+    fig.update_layout(title_text=f"<b>{titulo_base}</b><br><span style='font-size:18px; color:{c_ok};'><b>{taxa:.1f}%</b></span>", title_x=0.5, margin=dict(t=50, b=10, l=10, r=10), showlegend=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=220)
+    fig.update_traces(textposition='inside', textinfo='percent', hoverinfo='label+value', marker=dict(line=dict(color='#1E1E1E', width=1)))
+    return fig
+
+# ==========================================
+# 📊 ABA 1: PAINEL GERAL
+# ==========================================
+with tab_geral:
+    with st.container(border=True):
+        col_filtro, col_excel_meu, col_excel_equipe = st.columns([0.4, 0.3, 0.3])
+        meses_disponiveis = list(dados_todos_unfiltered["Mes"].unique()) if not dados_todos_unfiltered.empty else []
+        if mes_atual_str not in meses_disponiveis: meses_disponiveis.append(mes_atual_str)
+        meses_disponiveis = sorted(meses_disponiveis, reverse=True)
         
-        l_g = dados_todos_unfiltered[(dados_todos_unfiltered["Task"] == c) & (dados_todos_unfiltered["Usuario"] == usuario_atual)] if not dados_todos_unfiltered.empty else pd.DataFrame()
-        if not l_g.empty and l_g.iloc[0]["Mes"] != mes_atual_str: continue 
-
-        l_d_atual = df_mes_usuario[df_mes_usuario["Task"] == c] if not df_mes_usuario.empty else pd.DataFrame()
-        j_p_neste_mes = not l_d_atual.empty
-        is_dn = s in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
+        col_filtro.write("**Mês de Referência:**")
+        mes_selecionado = col_filtro.selectbox("Selecione o Mês:", meses_disponiveis, index=0, label_visibility="collapsed")
+        df_mes_equipe = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_selecionado]
+        df_mes_usuario = df_mes_equipe[df_mes_equipe["Usuario"] == usuario_atual]
         
-        if not is_dn and not j_p_neste_mes: continue 
-        t_exibidas += 1
-        e_k = f"edit_{c}"
-        if e_k not in st.session_state: st.session_state[e_k] = False
+    st.write("")
+    st.markdown(f"### 🏆 Meu Resumo ({mes_selecionado})")
+    total_cr_u = int(df_mes_usuario["Criados"].sum()) if not df_mes_usuario.empty else 0
+    total_sc_u = int(df_mes_usuario["Sem_Correcao"].sum()) if not df_mes_usuario.empty else 0
+    total_cc_u = int(df_mes_usuario["Com_Correcao"].sum()) if not df_mes_usuario.empty else 0
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total de Cenários (Meus)", total_cr_u)
+    c2.metric("Aprovados Direto ✅", total_sc_u)
+    c3.metric("Com Correção ⚠️", total_cc_u)
 
-        with st.container(border=True):
-            st.markdown(f"### [{c}]({st.session_state.jira_servidor}/browse/{c}) - {rs}")
-            st.write(f"**Status:** `{s}` | **Área:** {t_j['label']} | 👨‍💻 **Dev:** `{dv_r}`")
-            
-            if b_dados_jira != "Não informada":
-                st.caption(f"🗄️ *Base identificada no Jira:* `{b_dados_jira}`")
+    st.divider()
 
-            st.markdown("---")
+    if mes_selecionado != mes_atual_str:
+        with st.expander(f"🗄️ Histórico de {mes_selecionado}", expanded=False):
+            t_pesquisa_h = st.text_input(f"🔍 Pesquisar no histórico...", "")
+            if not df_mes_usuario.empty:
+                for idx, row in df_mes_usuario.iterrows():
+                    ch, dv = row["Task"], row["Desenvolvedor"]
+                    if t_pesquisa_h and t_pesquisa_h.lower() not in ch.lower() and t_pesquisa_h.lower() not in dv.lower(): continue
+                    with st.container(border=True):
+                        st.markdown(f"### ✅ [{ch}]({st.session_state.jira_servidor}/browse/{ch})")
+                        st.success(f"Registrado | Criados: **{row['Criados']}** | Sem Corr.: **{row['Sem_Correcao']}**")
+    else:
+        st.header(f"📝 Minhas Tarefas ({mes_atual_str})")
+        t_pesquisa_filling = st.text_input("🔍 Pesquisar tarefa (ex: QUA-1234, Bogo...)", "")
+        t_exibidas = 0
+        
+        if 'status_anterior' not in st.session_state: st.session_state.status_anterior = {}
+        
+        for t_j in tarefas_jira:
+            c, s, dv_r, rs = t_j["chave"], t_j["status"], t_j.get("desenvolvedor", "Não Informado"), t_j['resumo']
+            b_dados = t_j.get("base_dados", "Não informada") # Pega a base do Jira
+
+            if t_pesquisa_filling and t_pesquisa_filling.lower() not in c.lower() and t_pesquisa_filling.lower() not in dv_r.lower() and t_pesquisa_filling.lower() not in rs.lower(): continue 
             
-            if j_p_neste_mes and not st.session_state[e_k]:
-                c_t, c_b = st.columns([0.8, 0.2])
-                c_t.success(f"✅ **Métricas Salvas** | Criados: **{int(l_d_atual['Criados'].iloc[0])}** | Sem Corr.: **{int(l_d_atual['Sem_Correcao'].iloc[0])}** | Com Corr.: **{int(l_d_atual['Com_Correcao'].iloc[0])}**")
-                if c_b.button("✏️ Editar", key=f"btn_edit_{c}", use_container_width=True):
-                    st.session_state[e_k] = True
-                    st.rerun()
-            else:
-                c1, c2, c3 = st.columns([0.33, 0.33, 0.34])
-                c_i = c1.number_input("Criados", min_value=0, step=1, value=int(l_d_atual["Criados"].iloc[0]) if j_p_neste_mes else 0, key=f"cr_{c}")
-                s_i = c2.number_input("Sem Correção", min_value=0, step=1, value=int(l_d_atual["Sem_Correcao"].iloc[0]) if j_p_neste_mes else 0, key=f"sc_{c}")
-                cc_i = c3.number_input("Com Correção", min_value=0, step=1, value=int(l_d_atual["Com_Correcao"].iloc[0]) if j_p_neste_mes else 0, key=f"cc_{c}")
+            l_g = dados_todos_unfiltered[(dados_todos_unfiltered["Task"] == c) & (dados_todos_unfiltered["Usuario"] == usuario_atual)] if not dados_todos_unfiltered.empty else pd.DataFrame()
+            if not l_g.empty and l_g.iloc[0]["Mes"] != mes_atual_str: continue 
+
+            l_d_atual = df_mes_usuario[df_mes_usuario["Task"] == c] if not df_mes_usuario.empty else pd.DataFrame()
+            j_p_neste_mes = not l_d_atual.empty
+
+            # LÓGICA DE NOTIFICAÇÃO (MANTIDA)
+            s_ant = st.session_state.status_anterior.get(c, "DESCONHECIDO")
+            if s == "PUBLISHED" and s_ant != "PUBLISHED":
+                if not j_p_neste_mes: 
+                    st.toast(f"🚀 Tarefa {c} liberada para QA!", icon="🔔")
+                    icone_url = "https://cdn-icons-png.flaticon.com/512/1067/1067357.png"
+                    components.html(f"""
+                        <script>
+                        if (Notification.permission === 'granted') {{
+                            new Notification('Portal QA - Nova Tarefa!', {{
+                                body: 'A tarefa {c} está pronta para ser testada.\\nResumo: {rs}',
+                                icon: '{icone_url}'
+                            }});
+                        }}
+                        </script>
+                    """, height=0, width=0)
+            st.session_state.status_anterior[c] = s
+
+            is_dn = s in ["DONE", "PUBLISHED", "CONCLUÍDO", "ENTREGUE"]
+            if not is_dn and not j_p_neste_mes: continue 
+            
+            t_exibidas += 1
+            e_k = f"edit_{c}"
+            if e_k not in st.session_state: st.session_state[e_k] = False
+
+            with st.container(border=True):
+                st.markdown(f"### [{c}]({st.session_state.jira_servidor}/browse/{c}) - {rs}")
+                st.write(f"**Status:** `{s}` | **Área:** {t_j['label']} | 👨‍💻 **Dev:** `{dv_r}`")
                 
-                c_b1, c_b2 = st.columns([0.5, 0.5])
+                # Só exibe se encontrou a base no Jira
+                if b_dados != "Não informada":
+                    st.caption(f"🗄️ *Bases atreladas nesta Task (Jira):* `{b_dados}`")
+
+                st.markdown("---")
                 
-                # O BOTÃO MÁGICO: Salva os dados e checa o banco ao mesmo tempo
-                if c_b1.button("💾 Salvar", key=f"btn_salvar_{c}", use_container_width=True):
-                    # 1. Salva a tarefa no Google Sheets
-                    salvar_task_no_sheets(c, c_i, s_i, cc_i, mes_atual_str, t_j['label'], t_j['grupo'], usuario_atual, dv_r)
+                if j_p_neste_mes and not st.session_state[e_k]:
+                    c_t, c_b = st.columns([0.8, 0.2])
+                    c_t.success(f"✅ **Registrado** | Criados: **{int(l_d_atual['Criados'].iloc[0])}** | Sem Corr.: **{int(l_d_atual['Sem_Correcao'].iloc[0])}** | Com Corr.: **{int(l_d_atual['Com_Correcao'].iloc[0])}**")
+                    if c_b.button("✏️ Editar", key=f"btn_edit_{c}", use_container_width=True, disabled=not is_dn):
+                        st.session_state[e_k] = True
+                        st.rerun()
+                else:
+                    d_cr_filling = int(l_d_atual["Criados"].iloc[0]) if j_p_neste_mes else 0
+                    d_sc_filling = int(l_d_atual["Sem_Correcao"].iloc[0]) if j_p_neste_mes else 0
+                    d_cc_filling = int(l_d_atual["Com_Correcao"].iloc[0]) if j_p_neste_mes else 0
                     
-                    # 2. Faz a checagem do banco de dados na hora
-                    if b_dados_jira != "Não informada":
-                        status_bases = verificar_status_bases(b_dados_jira)
+                    c1, c2, c3, c4 = st.columns([0.20, 0.20, 0.20, 0.40])
+                    c_i = c1.number_input("Criados", min_value=0, step=1, value=d_cr_filling, key=f"cr_{c}")
+                    s_i = c2.number_input("Sem Correção", min_value=0, step=1, value=d_sc_filling, key=f"sc_{c}")
+                    cc_i = c3.number_input("Com Correção", min_value=0, step=1, value=d_cc_filling, key=f"cc_{c}")
+                    m_ref_i = c4.selectbox("Mês Referência", [(pd.to_datetime("today") - pd.DateOffset(months=i)).strftime("%Y-%m") for i in range(3)], index=0, key=f"mes_ref_{c}")
+                    
+                    c_b1, c_b2 = st.columns([0.5, 0.5])
+                    
+                    # 🔥 O BOTÃO DE SALVAR QUE CHECA O BANCO
+                    if c_b1.button("💾 Salvar & Checar Banco", key=f"btn_salvar_{c}", use_container_width=True):
+                        # 1. Salva na Planilha
+                        salvar_task_no_sheets(c, c_i, s_i, cc_i, m_ref_i, t_j['label'], t_j['grupo'], usuario_atual, dv_r)
                         
-                        bases_ativas = [b['base'] for b in status_bases if b['status'] == 'Ativa']
-                        falha_conexao = any(b['status'] == 'Erro_Conexao' for b in status_bases)
-                        
-                        if bases_ativas:
-                            # Mostra o alerta (Pop-up lateral que sobe na tela)
-                            st.toast(f"🚨 ALERTA: As bases {', '.join(bases_ativas)} AINDA ESTÃO ATIVAS!", icon="⚠️")
-                        elif falha_conexao:
-                            st.toast(f"🔌 Falha de rede: Não consegui acessar o servidor local para checar a base.", icon="📡")
+                        # 2. Faz a checagem do banco de dados na hora se existir
+                        if b_dados != "Não informada":
+                            status_bases = verificar_status_bases(b_dados)
+                            
+                            bases_ativas = [b['base'] for b in status_bases if b['status'] == 'Ativa']
+                            falha_conexao = any(b['status'] == 'Erro_Conexao' for b in status_bases)
+                            
+                            if bases_ativas:
+                                st.toast(f"🚨 ALERTA: As bases {', '.join(bases_ativas)} AINDA ESTÃO ATIVAS no servidor!", icon="⚠️")
+                            elif falha_conexao:
+                                st.toast(f"🔌 Falha de rede: Não consegui acessar o servidor local para checar a base.", icon="📡")
+                            else:
+                                st.toast(f"✅ Sucesso! Bases excluídas e métricas salvas.", icon="🎉")
                         else:
-                            st.toast(f"✅ Sucesso! Bases limpas e métricas salvas.", icon="🎉")
-                    else:
-                        st.toast("💾 Métricas salvas! Nenhuma base detectada.", icon="✅")
+                            st.toast("💾 Métricas salvas! Nenhuma base detectada.", icon="✅")
 
-                    st.session_state[e_k] = False 
-                    time.sleep(2) # Pequena pausa para você conseguir ler o pop-up (Toast)
-                    st.rerun()
-                    
-                if st.session_state[e_k] and c_b2.button("❌ Cancelar", key=f"btn_cancel_{c}", use_container_width=True):
-                    st.session_state[e_k] = False
-                    st.rerun()
+                        st.session_state[e_k] = False 
+                        time.sleep(2.5) # Dá tempo de ler o toast antes da tela recarregar
+                        st.rerun()
+                        
+                    if st.session_state[e_k] and c_b2.button("❌ Cancelar", key=f"btn_cancel_{c}", use_container_width=True):
+                        st.session_state[e_k] = False
+                        st.rerun()
 
-    if t_exibidas == 0:
-        st.balloons() 
-        st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
+        if t_exibidas == 0 and not t_pesquisa_filling:
+            st.balloons() 
+            st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
+
+# ==========================================
+# 🕵️‍♂️ ABA 2: SALA PRECISA (Mantida original)
+# ==========================================
+if tab_andrei:
+    with tab_andrei:
+        st.header("Análise Profunda e Sala Precisa dos Devs")
+        st.caption("Aba exclusiva para Andrei.")
+        if not dados_todos_unfiltered.empty:
+            meses_dev = list(dados_todos_unfiltered["Mes"].unique())
+            if mes_atual_str not in meses_dev: meses_dev.append(mes_atual_str)
+            mes_dev_selecionado = st.selectbox("Selecione o Mês para Análise:", sorted(meses_dev, reverse=True))
+            df_mes_dev = dados_todos_unfiltered[dados_todos_unfiltered["Mes"] == mes_dev_selecionado]
+            
+            st.subheader("🚀 Ranking Geral de Desenvolvedores")
+            if not df_mes_dev.empty:
+                df_devs_equipe = df_mes_dev.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
+                df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
+                st.dataframe(df_devs_equipe.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+        else:
+            st.warning("Nenhum dado registrado na nuvem.")
