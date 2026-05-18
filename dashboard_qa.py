@@ -534,12 +534,13 @@ with tab_geral:
             st.success("🎉 Sensacional! Fila zerada. Nenhuma tarefa aguardando preenchimento no momento!")
 
 # ==========================================
-# 🕵️‍♂️ ABA 2: SALA PRECISA (Mantida original)
+# 🕵️‍♂️ ABA 2: SALA PRECISA (Restaurada com Sucesso!)
 # ==========================================
 if tab_andrei:
     with tab_andrei:
         st.header("Análise Profunda e Sala Precisa dos Devs")
         st.caption("Aba exclusiva para Andrei.")
+        
         if not dados_todos_unfiltered.empty:
             meses_dev = list(dados_todos_unfiltered["Mes"].unique())
             if mes_atual_str not in meses_dev: meses_dev.append(mes_atual_str)
@@ -548,8 +549,34 @@ if tab_andrei:
             
             st.subheader("🚀 Ranking Geral de Desenvolvedores")
             if not df_mes_dev.empty:
+                # O Ranking que já estava funcionando
                 df_devs_equipe = df_mes_dev.groupby(["Grupo", "Desenvolvedor"])[["Criados", "Sem_Correcao", "Com_Correcao"]].sum().reset_index()
                 df_devs_equipe["Taxa de Acerto"] = (df_devs_equipe["Sem_Correcao"] / df_devs_equipe["Criados"].replace(0, 1)) * 100
                 st.dataframe(df_devs_equipe.style.format({"Taxa de Acerto": "{:.1f}%"}), hide_index=True, use_container_width=True)
+                
+                st.divider()
+
+                # O Raio-X que tinha sumido!
+                st.subheader("📋 Raio-X Cirúrgico (Quem testou o quê?)")
+                devs_unicos = sorted(df_mes_dev["Desenvolvedor"].unique())
+                
+                for dev in devs_unicos:
+                    df_dev = df_mes_dev[df_mes_dev["Desenvolvedor"] == dev].copy()
+                    total_cr_dev = df_dev["Criados"].sum()
+                    total_sc_dev = df_dev["Sem_Correcao"].sum()
+                    total_cc_dev = df_dev["Com_Correcao"].sum()
+                    taxa_final_dev = (total_sc_dev / total_cr_dev * 100) if total_cr_dev > 0 else 0
+                    
+                    titulo_expander = f"👨‍💻 {dev} | Acerto Final: {taxa_final_dev:.1f}% | Total de Cenários: {total_cr_dev} (✅ {total_sc_dev} / ⚠️ {total_cc_dev})"
+
+                    with st.expander(titulo_expander, expanded=False):
+                        df_detalhe = df_dev[["Task", "Usuario", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao"]].copy()
+                        df_detalhe["QA Responsável"] = df_detalhe["Usuario"].apply(lambda x: str(x).split('@')[0].split('.')[0].capitalize())
+                        df_detalhe["% da Task"] = (df_detalhe["Sem_Correcao"] / df_detalhe["Criados"].replace(0, 1)) * 100
+                        df_detalhe = df_detalhe[["Task", "QA Responsável", "Grupo", "Criados", "Sem_Correcao", "Com_Correcao", "% da Task"]]
+                        df_detalhe = df_detalhe.rename(columns={"Sem_Correcao": "Aprovados", "Com_Correcao": "Com Bug"})
+                        st.dataframe(df_detalhe.style.format({"% da Task": "{:.1f}%"}), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sem dados detalhados para exibir neste mês.")
         else:
             st.warning("Nenhum dado registrado na nuvem.")
